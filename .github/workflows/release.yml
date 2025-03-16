@@ -45,16 +45,11 @@ jobs:
           ARCHITECTURES=(
             "linux,amd64"
             "linux,arm64"
-            "windows,amd64"
           )
                      
           for ARCH in "${ARCHITECTURES[@]}"; do
             IFS=',' read -r OS PLATFORM <<< "$ARCH"            
             BINARY_NAME="${MODULE_NAME}_${OS}_${PLATFORM}_${VERSION}"
-            if [ "$OS" == "windows" ]; then
-              BINARY_NAME="${BINARY_NAME}.exe"
-            fi
-            
             echo "Building for ${OS}/${PLATFORM}..."
             GOOS=$OS GOARCH=$PLATFORM go build -ldflags="-X main.Version=${VERSION}" -o "./bin/${BINARY_NAME}" .
             sha256sum "./bin/${BINARY_NAME}" > "./bin/${BINARY_NAME}.sha256"            

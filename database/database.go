@@ -3,13 +3,22 @@ package database
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"fmt"
 	"log/slog"
+	"path"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
 	"time"
 
 	"github.com/angas/solarplant-go/hours"
 	sqlite "modernc.org/sqlite"
 )
+
+//go:embed migrations
+var migrationsDir embed.FS
 
 type Database struct {
 	logger *slog.Logger
@@ -54,18 +63,19 @@ func New(ctx context.Context, path string) (*Database, error) {
 	write.SetMaxOpenConns(1) // only a single writer ever, no concurrency
 	write.SetConnMaxIdleTime(time.Minute)
 
-	err = migrate(ctx, write)
+	d := &Database{
+		logger: slog.Default().With(slog.String("module", "database")),
+		read:   read,
+		write:  write,
+		path:   path,
+	}
+
+	err = d.migrate(ctx)
 	if err != nil {
 		panic(fmt.Errorf("database migration error: %w", err))
 	}
 
-	return &Database{
-			logger: slog.Default().With(slog.String("module", "database")),
-			read:   read,
-			write:  write,
-			path:   path,
-		},
-		nil
+	return d, nil
 }
 
 func (d *Database) SetLogger(logger *slog.Logger) {
@@ -77,7 +87,89 @@ func (d *Database) Close() {
 	d.write.Close()
 }
 
-func (d *Database) purgeData(ctx context.Context, table string, retentionDays int) error {
+func (d *Database) migrate(ctx context.Context) error {
+	var currVer int
+	err := d.read.QueryRowContext(ctx, "PRAGMA user_version").Scan(&currVer)
+	if err != nil {
+		return fmt.Errorf("get current version: %w", err)
+	}
+
+	files, err := migrationsDir.ReadDir("migrations")
+	if err != nil {
+		return fmt.Errorf("read migrations directory: %w", err)
+	}
+
+	var sqlFiles []string
+	for _, f := range files {
+		if !f.IsDir() && filepath.Ext(f.Name()) == ".sql" {
+			sqlFiles = append(sqlFiles, f.Name())
+		}
+	}
+
+	slices.Sort(sqlFiles)
+
+	backupBeforeMigration := false
+	re := regexp.MustCompile(`^(\d+)[-_]`)
+
+	for _, name := range sqlFiles {
+		matches := re.FindStringSubmatch(name)
+		if len(matches) < 2 {
+			return fmt.Errorf("parse version from migration file: %s", name)
+		}
+		nextVer, err := strconv.Atoi(matches[1])
+		if err != nil {
+			return fmt.Errorf("convert migration version from file %s: %w", name, err)
+		}
+		if nextVer <= currVer {
+			continue // Skip migration if already applied
+		}
+
+		if !backupBeforeMigration {
+			backupBeforeMigration = true
+			err = d.Backup(ctx)
+			if err != nil {
+				return fmt.Errorf("backup database before migration: %w", err)
+			}
+		}
+
+		d.logger.Debug(fmt.Sprintf("applying migration %d", nextVer))
+
+		data, err := migrationsDir.ReadFile(path.Join("migrations", name))
+		if err != nil {
+			return fmt.Errorf("read migration file %s: %w", name, err)
+		}
+
+		tx, err := d.write.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("start transaction for migration %d: %w", nextVer, err)
+		}
+
+		_, err = tx.ExecContext(ctx, string(data))
+		if err != nil {
+			if err := tx.Rollback(); err != nil {
+				return fmt.Errorf("rollback migration %d: %w", nextVer, err)
+			}
+			return fmt.Errorf("apply migration %d: %w", nextVer, err)
+		}
+
+		_, err = tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d;", nextVer))
+		if err != nil {
+			if err = tx.Rollback(); err != nil {
+				return fmt.Errorf("rollback migration %d: %w", nextVer, err)
+			}
+			return fmt.Errorf("update database version for migration %d: %w", nextVer, err)
+		}
+
+		err = tx.Commit()
+		if err != nil {
+			return fmt.Errorf("commit migration %d: %w", nextVer, err)
+		}
+	}
+
+	return nil
+}
+
+func (d *Database) purgeTable(ctx context.Context, table string, retentionDays int) error {
 	d.logger.Debug(fmt.Sprintf("purging table %s", table))
 	duration := 24 * time.Hour * time.Duration(retentionDays)
 	before := hours.FromTime(time.Now().Add(-duration))

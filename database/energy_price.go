@@ -80,5 +80,5 @@ func (d *Database) GetEnergyPriceFrom(ctx context.Context, dh hours.DateHour) ([
 }
 
 func (d *Database) PurgeEnergyPrice(ctx context.Context, retentionDays int) error {
-	return d.purgeData(ctx, "energy_price", retentionDays)
+	return d.purgeTable(ctx, "energy_price", retentionDays)
 }

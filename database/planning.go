@@ -133,5 +133,5 @@ func (d *Database) GetDetailedPlanningFrom(ctx context.Context, dh hours.DateHou
 }
 
 func (d *Database) PurgePlanning(ctx context.Context, retentionDays int) error {
-	return d.purgeData(ctx, "planning", retentionDays)
+	return d.purgeTable(ctx, "planning", retentionDays)
 }

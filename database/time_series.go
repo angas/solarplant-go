@@ -269,5 +269,5 @@ func (d *Database) GetDailyStats(ctx context.Context, noOfDays int) ([]DailyStat
 }
 
 func (d *Database) PurgeTimeSeries(ctx context.Context, retentionDays int) error {
-	return d.purgeData(ctx, "time_series", retentionDays)
+	return d.purgeTable(ctx, "time_series", retentionDays)
 }

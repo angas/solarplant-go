@@ -1,9 +1,14 @@
-name: Build and Release Go Artifacts
+name: Build and Release Artifacts and Docker Image
 
 on:
   push:
     tags:
       - "v*"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,18 +31,6 @@ jobs:
       - name: Run tests
         run: go test -v ./...
 
-      - name: Set version
-        id: version
-        run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            VERSION="${{ github.ref_name }}"
-          else
-            VERSION=$(git rev-parse --short HEAD)
-          fi
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          echo "VERSION=${VERSION}"
-          echo "RELEASE_NAME=${VERSION}" >> $GITHUB_ENV
-
       - name: Build for multiple architectures
         run: |
           mkdir -p ./bin
@@ -46,17 +39,17 @@ jobs:
             "linux,amd64"
             "linux,arm64"
           )
-                     
+                                 
           for ARCH in "${ARCHITECTURES[@]}"; do
             IFS=',' read -r OS PLATFORM <<< "$ARCH"            
-            BINARY_NAME="${MODULE_NAME}_${OS}_${PLATFORM}_${VERSION}"
+            BINARY_NAME="${MODULE_NAME}_${OS}_${PLATFORM}_${{github.ref_name}}"
             echo "Building for ${OS}/${PLATFORM}..."
-            GOOS=$OS GOARCH=$PLATFORM go build -ldflags="-X main.Version=${VERSION}" -o "./bin/${BINARY_NAME}" .
+            GOOS=$OS GOARCH=$PLATFORM go build -ldflags="-X main.Version=${{github.ref_name}}" -o "./bin/${BINARY_NAME}" .
             sha256sum "./bin/${BINARY_NAME}" > "./bin/${BINARY_NAME}.sha256"            
           done
 
           cd ./bin
-          tar -czvf "${MODULE_NAME}_all_${VERSION}.tar.gz" *
+          tar -czvf "${MODULE_NAME}_all_${{github.ref_name}}.tar.gz" *
           cd ..
 
       - name: Upload artifacts
@@ -66,7 +59,7 @@ jobs:
           path: ./bin/
           retention-days: 7
 
-  release:
+  release-artifacts:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
@@ -87,3 +80,45 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: false
+  
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Log in to the Container registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true   

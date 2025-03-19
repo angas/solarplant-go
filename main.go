@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -139,8 +138,7 @@ func main() {
 		}
 	}()
 
-	sysInfo := www.SysInfo{Version: Version, RuntimeVersion: runtime.Version()}
-	server := www.StartServer(db, tasks, faInMem, recentHours, cnfg, sysInfo)
+	server := www.StartServer(db, tasks, faInMem, recentHours, cnfg, Version)
 	server.Run(ctx)
 }
 

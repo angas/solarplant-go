@@ -1,3 +1,10 @@
 <div><a href="https://github.com/angas/solarplant-go" target="_blank">source</a></div>
-<div>{{.Version}}</div>
+<div>{{.CurrentVersion}}</div>
+{{if ne .LatestVersion .CurrentVersion}}
+<div>
+  <a href="https://github.com/angas/solarplant-go/releases" target="_blank"
+    style="color: var(--highlight-color)">version {{.LatestVersion}} is now
+    available</a>
+</div>
+{{end}}
 <div>{{.RuntimeVersion}}</div>

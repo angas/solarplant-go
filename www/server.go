@@ -18,11 +18,6 @@ import (
 	"github.com/angas/solarplant-go/task"
 )
 
-type SysInfo struct {
-	Version        string
-	RuntimeVersion string
-}
-
 type Server struct {
 	logger      *slog.Logger
 	db          *database.Database
@@ -42,7 +37,7 @@ func StartServer(
 	faInMem *ferroamp.FaInMemData,
 	recentHours *database.RecentHours,
 	cnfg *config.AppConfig,
-	sysInfo SysInfo) *Server {
+	currentVersion string) *Server {
 
 	logger := slog.Default().With("module", "www")
 	tm, err := NewTemplateManager(logger, cnfg.Api.WwwDir)
@@ -67,7 +62,7 @@ func StartServer(
 	http.Handle("GET /sysinfo", NewSysInfoHandler(
 		logger.With(slog.String("handler", "timeseries")),
 		s.tm,
-		sysInfo))
+		currentVersion))
 
 	http.Handle("GET /timeseries", NewTimeSeriesHandler(
 		logger.With(slog.String("handler", "timeseries")),

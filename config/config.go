@@ -149,10 +149,14 @@ type AppConfig struct {
 	Logging                  AppConfigLogging         `mapstructure:"logging"`
 }
 
-func Load() (config *AppConfig) {
-	viper.AddConfigPath("config")
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
+func Load(path string) (config *AppConfig) {
+	if path != "" {
+		viper.SetConfigFile(path)
+	} else {
+		viper.AddConfigPath("config")
+		viper.SetConfigName("config")
+		viper.SetConfigType("yaml")
+	}
 	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 

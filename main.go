@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -25,7 +26,10 @@ import (
 var Version = "?.?.?"
 
 func main() {
-	cnfg := config.Load()
+	configPath := flag.String("config", "", "path to config file")
+	flag.Parse()
+
+	cnfg := config.Load(*configPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

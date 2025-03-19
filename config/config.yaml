@@ -11,7 +11,7 @@ database:
 ferroamp:
   host: ferroamp.internal
   port: 1883
-  username: extapi 
+  username: extapi
   password: SECRET # Handed over by Ferroamp on request
 
 weather_forecast:

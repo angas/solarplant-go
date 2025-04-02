@@ -63,7 +63,7 @@ func (c *Client) WritePump() {
 
 			if !ok {
 				if err := c.conn.WriteMessage(ws.CloseMessage, []byte{}); err != nil {
-					c.logger.Warn("web socket close message failed", slog.Any("error", err))
+					c.logger.Debug("web socket close message failed", slog.Any("error", err))
 				}
 				return
 			}
@@ -80,7 +80,7 @@ func (c *Client) WritePump() {
 			}
 
 			if err = w.Close(); err != nil {
-				c.logger.Warn("web socket close failed", slog.Any("error", err))
+				c.logger.Debug("web socket close failed", slog.Any("error", err))
 				return
 			}
 

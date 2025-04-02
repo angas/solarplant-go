@@ -26,14 +26,25 @@ type pendingRequest struct {
 	DoneCh  chan struct{}
 }
 
+var topics = map[string]byte{
+	"extapi/data/ehub":        0,
+	"extapi/data/sso":         0,
+	"extapi/data/eso":         0,
+	"extapi/data/esm":         0,
+	"extapi/control/response": 0,
+	"extapi/control/event":    0,
+}
+
 type Ferroamp struct {
 	mtqqClient        mqtt.Client
 	logger            *slog.Logger
 	pending           map[string]pendingRequest
 	pendingMutex      sync.RWMutex
-	stopPurgeCh       chan struct{}
 	lastEsoFaultCode  uint16
 	lastSsoFaultCode  uint16
+	lastMessageTime   ConcurrentTimer
+	stopPurgeCh       chan struct{}
+	stopMonitorCh     chan struct{}
 	OnEhubMessage     OnEhubMessage
 	OnSsoMessage      OnSsoMessage
 	OnEsoMessage      OnEsoMessage
@@ -68,6 +79,7 @@ func New(broker string, port int16, username string, password string) *Ferroamp 
 		pending:          make(map[string]pendingRequest),
 		lastEsoFaultCode: 0,
 		lastSsoFaultCode: 0,
+		lastMessageTime:  ConcurrentTimer{},
 	}
 }
 
@@ -78,16 +90,11 @@ func (fa *Ferroamp) Connect() error {
 		return token.Error()
 	}
 
-	topics := map[string]byte{
-		"extapi/data/ehub":        0,
-		"extapi/data/sso":         0,
-		"extapi/data/eso":         0,
-		"extapi/data/esm":         0,
-		"extapi/control/response": 0,
-		"extapi/control/event":    0,
-	}
+	fa.inactivityWatchdog()
 
 	token := fa.mtqqClient.SubscribeMultiple(topics, func(client mqtt.Client, msg mqtt.Message) {
+		fa.lastMessageTime.Reset()
+
 		switch msg.Topic() {
 		case "extapi/data/ehub":
 			var ehub EhubMessage
@@ -180,6 +187,30 @@ func (fa *Ferroamp) Connect() error {
 	return nil
 }
 
+func (fa *Ferroamp) Disconnect() {
+	fa.logger.Info("disconnecting ferroamp mqtt client")
+	if fa.stopPurgeCh != nil {
+		close(fa.stopPurgeCh)
+		fa.stopPurgeCh = nil
+	}
+	if fa.stopMonitorCh != nil {
+		close(fa.stopMonitorCh) // Signal the monitor routine to stop
+		fa.stopMonitorCh = nil
+	}
+
+	keys := make([]string, 0, len(topics))
+	for k := range topics {
+		keys = append(keys, k)
+	}
+	token := fa.mtqqClient.Unsubscribe(keys...)
+	token.WaitTimeout(1 * time.Second)
+	if token.Error() != nil {
+		fa.logger.Error("error unsubscribing from topics", slog.Any("error", token.Error()))
+	}
+
+	fa.mtqqClient.Disconnect(250)
+}
+
 func (fa *Ferroamp) formatPayload(power float64) (transId string, payload string) {
 	watts := int(math.Abs(power * 1e3))
 	transId = fmt.Sprintf("solarplant-%d", time.Now().Unix())
@@ -236,16 +267,30 @@ func (fa *Ferroamp) SetBatteryLoad(power float64) error {
 	return fa.sendControlRequest(transId, payload)
 }
 
-func (fa *Ferroamp) Disconnect() {
-	fa.logger.Info("disconnecting ferroamp mqtt client")
-	if fa.stopPurgeCh != nil {
-		close(fa.stopPurgeCh) // Signal the purge routine to stop
+func (fa *Ferroamp) handleEsoFaultCode(newFaultCode uint16) {
+	if fa.lastEsoFaultCode == newFaultCode {
+		return // Nothing changed
 	}
-	fa.mtqqClient.Disconnect(250)
+
+	for bitValue, desc := range esoFaultsCodes {
+		hexCode := fmt.Sprintf("0x%04x", bitValue)
+
+		// Check if fault code is new
+		if fa.lastEsoFaultCode&bitValue == 0 && newFaultCode&bitValue != 0 {
+			fa.logger.Warn(fmt.Sprintf("new fault code (%s) from ESO: %s", hexCode, desc), slog.String("faultCode", hexCode))
+		}
+		// Check if fault code is cleared
+		if fa.lastEsoFaultCode&bitValue != 0 && newFaultCode&bitValue == 0 {
+			fa.logger.Debug(fmt.Sprintf("cleared fault code (%s) from ESO", hexCode), slog.String("faultCode", hexCode))
+		}
+	}
+
+	fa.lastEsoFaultCode = newFaultCode
 }
 
 func (fa *Ferroamp) startPurgeRoutine() {
 	fa.stopPurgeCh = make(chan struct{})
+
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
@@ -273,23 +318,35 @@ func (fa *Ferroamp) startPurgeRoutine() {
 	}()
 }
 
-func (fa *Ferroamp) handleEsoFaultCode(newFaultCode uint16) {
-	if fa.lastEsoFaultCode == newFaultCode {
-		return // Nothing changed
-	}
+func (fa *Ferroamp) inactivityWatchdog() {
+	trafficOk := true
+	maxElapsed := 10 * time.Second
+	fa.lastMessageTime.Reset()
+	fa.stopMonitorCh = make(chan struct{})
 
-	for bitValue, desc := range esoFaultsCodes {
-		hexCode := fmt.Sprintf("0x%04x", bitValue)
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if fa.lastMessageTime.Elapsed() >= maxElapsed {
+					if trafficOk {
+						// TODO: Maybe implement a reconnect if this turns out to be a problem.
+						fa.logger.Warn(fmt.Sprintf("no incoming mqtt traffic for the last %.0f seconds", maxElapsed.Seconds()))
+						trafficOk = false
+					}
+				} else {
+					if !trafficOk {
+						fa.logger.Info("mqtt traffic is restored")
+						trafficOk = true
+					}
+				}
 
-		// Check if fault code is new
-		if fa.lastEsoFaultCode&bitValue == 0 && newFaultCode&bitValue != 0 {
-			fa.logger.Warn(fmt.Sprintf("new fault code (%s) from ESO: %s", hexCode, desc), slog.String("faultCode", hexCode))
+			case <-fa.stopMonitorCh:
+				fa.logger.Debug("stopping ferroamp monitor routine")
+				return
+			}
 		}
-		// Check if fault code is cleared
-		if fa.lastEsoFaultCode&bitValue != 0 && newFaultCode&bitValue == 0 {
-			fa.logger.Debug(fmt.Sprintf("cleared fault code (%s) from ESO", hexCode), slog.String("faultCode", hexCode))
-		}
-	}
-
-	fa.lastEsoFaultCode = newFaultCode
+	}()
 }

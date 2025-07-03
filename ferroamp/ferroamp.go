@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -68,10 +69,10 @@ func New(broker string, port int16, username string, password string) *Ferroamp 
 		logger.Warn("ferroamp MQTT connection lost", slog.Any("error", err))
 	}
 
-	// mqtt.ERROR = log.New(os.Stdout, "[ERROR] ", 0)
-	// mqtt.CRITICAL = log.New(os.Stdout, "[CRIT] ", 0)
-	// mqtt.WARN = log.New(os.Stdout, "[WARN]  ", 0)
-	// mqtt.DEBUG = log.New(os.Stdout, "[DEBUG] ", 0)
+	mqttLogger := slog.Default().With("module", "mqtt")
+	mqtt.CRITICAL = newMqttLogger(mqttLogger, slog.LevelError)
+	mqtt.ERROR = newMqttLogger(mqttLogger, slog.LevelError)
+	mqtt.WARN = newMqttLogger(mqttLogger, slog.LevelWarn)
 
 	return &Ferroamp{
 		mtqqClient:       mqtt.NewClient(opts),
@@ -321,6 +322,7 @@ func (fa *Ferroamp) startPurgeRoutine() {
 func (fa *Ferroamp) inactivityWatchdog() {
 	trafficOk := true
 	maxElapsed := 10 * time.Second
+	panicTimeout := 60 * time.Second
 	fa.lastMessageTime.Reset()
 	fa.stopMonitorCh = make(chan struct{})
 
@@ -330,6 +332,12 @@ func (fa *Ferroamp) inactivityWatchdog() {
 		for {
 			select {
 			case <-ticker.C:
+				if fa.lastMessageTime.Elapsed() >= panicTimeout {
+					fa.logger.Error(fmt.Sprintf("no incoming mqtt traffic for the last %.0f seconds, terminating...", panicTimeout.Seconds()))
+					fa.Disconnect()
+					time.Sleep(1 * time.Second)
+					os.Exit(1)
+				}
 				if fa.lastMessageTime.Elapsed() >= maxElapsed {
 					if trafficOk {
 						// TODO: Maybe implement a reconnect if this turns out to be a problem.

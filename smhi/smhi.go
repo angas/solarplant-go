@@ -14,7 +14,7 @@ func Get(lon float64, lat float64) ([]WetherForecast, error) {
 		"%s/api/category/pmp3g/version/2/geotype/point/lon/%0.4f/lat/%0.4f/data.json",
 		BASE_URL, lon, lat)
 
-	slog.Default().Info("Fetching forecast from SMHI...", "url", url)
+	slog.Default().Info("fetching forecast from SMHI...", "url", url)
 
 	req, _ := http.NewRequest("GET", url, nil)
 	client := http.Client{Timeout: 10 * time.Second}

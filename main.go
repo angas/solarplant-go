@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -25,6 +26,13 @@ import (
 var Version = "?.?.?"
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("application panicked", slog.Any("error", r), slog.String("stack", string(debug.Stack())))
+			os.Exit(1)
+		}
+	}()
+
 	configPath := flag.String("config", "", "path to config file")
 	flag.Parse()
 
@@ -44,11 +52,6 @@ func main() {
 	}
 	defer db.Close()
 
-	recentHours := database.NewRecentHours(db)
-	if err := recentHours.Reload(ctx); err != nil {
-		panic(err)
-	}
-
 	logger := slog.New(logging.NewMultiHandler(
 		consoleHandler,
 		logging.NewSQLiteHandler(db, cnfg.Logging.GetDbLevel(), cnfg.Logging.GetDbAttrsFormat())))
@@ -56,6 +59,11 @@ func main() {
 
 	// Now we can use the logger to log database operations into the database itself
 	db.SetLogger(logger.With("module", "database"))
+
+	recentHours := database.NewRecentHours(db)
+	if err := recentHours.Reload(ctx); err != nil {
+		panic(err)
+	}
 
 	fa := ferroamp.New(
 		cnfg.Ferroamp.Host,

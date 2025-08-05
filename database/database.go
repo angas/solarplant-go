@@ -72,7 +72,7 @@ func New(ctx context.Context, path string) (*Database, error) {
 
 	err = d.migrate(ctx)
 	if err != nil {
-		panic(fmt.Errorf("database migration error: %w", err))
+		return nil, fmt.Errorf("database migration failed: %w", err)
 	}
 
 	return d, nil

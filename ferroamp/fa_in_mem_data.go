@@ -15,6 +15,21 @@ func NewFaInMemData() *FaInMemData {
 	return &FaInMemData{data: NewFaData()}
 }
 
+func (d *FaInMemData) Healthy() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.data == nil {
+		return false
+	}
+	if d.data.Ehub.Ts.Value == "" {
+		return false
+	}
+	if len(d.data.Sso) == 0 && len(d.data.Eso) == 0 && len(d.data.Esm) == 0 {
+		return false
+	}
+	return true
+}
+
 func (d *FaInMemData) CurrentState() *FaData {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

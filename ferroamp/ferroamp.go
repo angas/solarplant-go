@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +18,7 @@ type OnEsoMessage func(msg *EsoMessage)
 type OnEsmMessage func(msg *EsmMessage)
 type OnControlResponse func(msg *ControlResponseMessage)
 type OnControlEvent func(msg *ControlEventMessage)
+type OnInactivity func()
 
 type pendingRequest struct {
 	TransId string
@@ -52,6 +52,7 @@ type Ferroamp struct {
 	OnEsmMessage      OnEsmMessage
 	OnControlResponse OnControlResponse
 	OnControlEvent    OnControlEvent
+	OnInactivity      OnInactivity
 }
 
 func New(broker string, port int16, username string, password string) *Ferroamp {
@@ -322,7 +323,7 @@ func (fa *Ferroamp) startPurgeRoutine() {
 func (fa *Ferroamp) inactivityWatchdog() {
 	trafficOk := true
 	maxElapsed := 10 * time.Second
-	panicTimeout := 60 * time.Second
+	inactivityTimeout := 60 * time.Second
 	fa.lastMessageTime.Reset()
 	fa.stopMonitorCh = make(chan struct{})
 
@@ -332,11 +333,10 @@ func (fa *Ferroamp) inactivityWatchdog() {
 		for {
 			select {
 			case <-ticker.C:
-				if fa.lastMessageTime.Elapsed() >= panicTimeout {
-					fa.logger.Error(fmt.Sprintf("no incoming mqtt traffic for the last %.0f seconds, terminating...", panicTimeout.Seconds()))
-					fa.Disconnect()
-					time.Sleep(1 * time.Second)
-					os.Exit(1)
+				if fa.lastMessageTime.Elapsed() >= inactivityTimeout {
+					if fa.OnInactivity != nil {
+						fa.OnInactivity()
+					}
 				}
 				if fa.lastMessageTime.Elapsed() >= maxElapsed {
 					if trafficOk {

@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/angas/solarplant-go/config"
@@ -14,6 +15,7 @@ import (
 type Tasks struct {
 	cron                *cron.Cron
 	cnfg                *config.AppConfig
+	logger              *slog.Logger
 	WeatherForecastTask func()
 	EnergyForecastTask  func()
 	EnergyPriceTask     func()
@@ -33,6 +35,7 @@ func NewTasks(
 	return &Tasks{
 		cron:                cron.New(),
 		cnfg:                cnfg,
+		logger:              logger,
 		WeatherForecastTask: NewWeatherForecastTask(logger.With(slog.String("task", "weather_forecast")), db, cnfg.WeatherForecast),
 		EnergyForecastTask:  NewEnergyForecastTask(logger.With(slog.String("task", "energy_forecast")), db, cnfg.EnergyForecast),
 		EnergyPriceTask:     NewEnergyPriceTask(logger.With(slog.String("task", "energy_price")), db, energyPriceProviders),
@@ -45,27 +48,27 @@ func NewTasks(
 func (t *Tasks) Run() {
 	_, err := t.cron.AddFunc(t.cnfg.WeatherForecast.RunAt, t.WeatherForecastTask)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("failed to schedule weather forecast task: %v", err))
 	}
 	_, err = t.cron.AddFunc(t.cnfg.EnergyForecast.RunAt, t.EnergyForecastTask)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("failed to schedule energy forecast task: %v", err))
 	}
 	_, err = t.cron.AddFunc(t.cnfg.EnergyPrice.RunAt, t.EnergyPriceTask)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("failed to schedule energy price task: %v", err))
 	}
 	_, err = t.cron.AddFunc("@hourly", t.TimeSeriesTask)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("failed to schedule time series task: %v", err))
 	}
 	_, err = t.cron.AddFunc(t.cnfg.Planner.RunAt, t.PlanningTask)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("failed to schedule planning task: %v", err))
 	}
 	_, err = t.cron.AddFunc("30 2 * * *", t.MaintenanceTask)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("failed to schedule maintenance task: %v", err))
 	}
 	t.cron.Start()
 }

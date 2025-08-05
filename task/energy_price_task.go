@@ -12,7 +12,7 @@ import (
 
 func NewEnergyPriceTask(logger *slog.Logger, db *database.Database, providers []types.EnergyPriceProvider) func() {
 	if len(providers) == 0 {
-		panic("no energy price providers")
+		panic("no energy price providers configured")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

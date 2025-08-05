@@ -22,7 +22,10 @@ func (d *Database) SaveLogEntry(ctx context.Context, r LogEntryRow) error {
 		r.Level,
 		r.Message,
 		r.Attrs)
-	return fmt.Errorf("saving log entry: %w", err)
+	if err != nil {
+		return fmt.Errorf("saving log entry: %w", err)
+	}
+	return nil
 }
 
 func (d *Database) GetLogEntries(ctx context.Context, minLvl slog.Level, page, pageSize int) ([]LogEntryRow, error) {

@@ -21,6 +21,11 @@ func NewPlanningTask(logger *slog.Logger, db *database.Database, cnfg *config.Ap
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
+		if !faInMem.Healthy() {
+			logger.Warn("ferroamp data is not healthy, skipping planning task")
+			return
+		}
+
 		startHour := hours.FromNow().Add(1)
 
 		optInput := optimize.Input{

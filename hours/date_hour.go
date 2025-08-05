@@ -2,7 +2,6 @@ package hours
 
 import (
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -19,7 +18,7 @@ func init() {
 	var err error
 	stockholmLoc, err = time.LoadLocation("Europe/Stockholm")
 	if err != nil {
-		log.Panicf("failed to load location: %v", err)
+		panic(fmt.Sprintf("failed to load Stockholm location: %v", err))
 	}
 }
 

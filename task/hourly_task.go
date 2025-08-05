@@ -31,11 +31,16 @@ func NewHourlyTask(
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := db.SaveFaSnapshot(ctx, database.FaSnapshotRow{
-			When: currHour,
-			Data: *faInMem.CurrentState(),
-		}); err != nil {
-			logger.Error("hourly task error, saving snapshot", slog.Any("error", err))
+		if faInMem.Healthy() {
+			if err := db.SaveFaSnapshot(ctx, database.FaSnapshotRow{
+				When: currHour,
+				Data: *faInMem.CurrentState(),
+			}); err != nil {
+				logger.Error("hourly task error, saving snapshot", slog.Any("error", err))
+			}
+		} else {
+			logger.Warn("ferroamp data is not healthy, skipping snapshot")
+			return
 		}
 
 		prevHour, ok := recentHours.Get(currHour.Sub(1))

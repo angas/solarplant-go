@@ -149,7 +149,7 @@ type AppConfig struct {
 	Logging                  AppConfigLogging         `mapstructure:"logging"`
 }
 
-func Load(path string) (config *AppConfig) {
+func Load(path string) (*AppConfig, error) {
 	if path != "" {
 		viper.SetConfigFile(path)
 	} else {
@@ -163,12 +163,12 @@ func Load(path string) (config *AppConfig) {
 	var c AppConfig
 
 	if err := viper.ReadInConfig(); err != nil {
-		panic(fmt.Errorf("unable to read config file: %w", err))
+		return nil, fmt.Errorf("unable to read config file: %w", err)
 	}
 
 	if err := viper.Unmarshal(&c); err != nil {
-		panic(fmt.Errorf("unable to unmarshal config file: %w", err))
+		return nil, fmt.Errorf("unable to unmarshal config file: %w", err)
 	}
 
-	return &c
+	return &c, nil
 }

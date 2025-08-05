@@ -5,7 +5,6 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -179,7 +178,7 @@ func staticFilesHandler(extDir *string) http.Handler {
 
 	fsys, err := fs.Sub(embeddedStaticDir, "static")
 	if err != nil {
-		log.Panic(err)
+		panic(fmt.Sprintf("failed to create sub filesystem: %v", err))
 	}
 	return http.FileServer(http.FS(fsys))
 }

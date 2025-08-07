@@ -1,15 +1,26 @@
 package optimize
 
-// Recursive function to generate all permutations of strategies
+import "math"
+
+// Generates all possible permutations of strategies
 // for a given number of hours.
-func permute(hours int, current []Strategy) [][]Strategy {
-	if hours == 0 {
-		return [][]Strategy{append([]Strategy{}, current...)}
+func permute(hours int) [][]Strategy {
+	if hours < 1 || hours > 24 {
+		return [][]Strategy{{}}
 	}
 
-	var result [][]Strategy
-	for s := 0; s < int(strategyCount); s++ {
-		result = append(result, permute(hours-1, append(current, Strategy(s)))...)
+	count := int(math.Pow(float64(strategyCount), float64(hours)))
+	result := make([][]Strategy, count)
+
+	for i := range count {
+		perm := make([]Strategy, hours)
+		temp := i
+		for j := hours - 1; j >= 0; j-- {
+			perm[j] = Strategy(temp % int(strategyCount))
+			temp /= int(strategyCount)
+		}
+
+		result[i] = perm
 	}
 
 	return result

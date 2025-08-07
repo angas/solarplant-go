@@ -2,7 +2,6 @@ package optimize
 
 import (
 	"math"
-	"sort"
 
 	"github.com/angas/solarplant-go/calc"
 )
@@ -35,38 +34,19 @@ type Output struct {
 	Strategy     []Strategy // Optimal strategy for each hour in the forecast
 }
 
-// BestStrategies calculates optimal charging/discharging
-// based on energy prices and other constraints
+// Generate all (brute-force) permutations of strategies
+// for the forecast length and then calculate
+// the cost for each permutation and find the one with the lowest cost
 func BestStrategies(input Input) Output {
-	type permutationCost struct {
-		Cost         float64
-		BatteryLevel float64
-		Permutation  []Strategy
-	}
-
-	// Generate all permutations of strategies
-	// for the forecast length and then calculate
-	// the cost for each permutation
-	permutations := []permutationCost{}
-	for _, p := range permute(len(input.Forecast), []Strategy{}) {
+	best := Output{Cost: math.Inf(1), Strategy: []Strategy{}}
+	for _, p := range permute(len(input.Forecast)) {
 		cost, battLvl := costForPermutation(input, p)
-		permutations = append(permutations, permutationCost{
-			Cost:         cost,
-			BatteryLevel: battLvl,
-			Permutation:  p,
-		})
+		if cost < best.Cost {
+			best = Output{Cost: cost, BatteryLevel: battLvl, Strategy: p}
+		}
 	}
 
-	// Sort permutations by cost, lowest first
-	sort.Slice(permutations, func(p1, p2 int) bool {
-		return permutations[p1].Cost < permutations[p2].Cost
-	})
-
-	return Output{
-		Cost:         permutations[0].Cost,
-		BatteryLevel: permutations[0].BatteryLevel,
-		Strategy:     permutations[0].Permutation,
-	}
+	return best
 }
 
 // Calculates the total cost for a given permutation of strategies,

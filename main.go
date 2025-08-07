@@ -90,7 +90,7 @@ func main() {
 	}
 	fa.OnInactivity = func() {
 		fa.Disconnect()
-		exitWithError(logger, fmt.Errorf("ferroamp MQTT traffic is dead, terminating..."))
+		exitWithError(logger, fmt.Errorf("ferroamp mqtt traffic is dead, terminating..."))
 	}
 
 	if isDevMode() {

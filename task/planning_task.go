@@ -18,7 +18,7 @@ import (
 func NewPlanningTask(logger *slog.Logger, db *database.Database, cnfg *config.AppConfig, faInMem *ferroamp.FaInMemData) func() {
 	return func() {
 		logger.Debug("running planning task...")
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		if !faInMem.Healthy() {
@@ -79,6 +79,11 @@ func NewPlanningTask(logger *slog.Logger, db *database.Database, cnfg *config.Ap
 		}
 
 		for h := range int(cnfg.Planner.HoursAhead) {
+			if ctx.Err() != nil {
+				logger.Error("planning task timeout/cancelled", slog.Any("error", ctx.Err()))
+				return
+			}
+
 			dh := startHour.Add(h)
 			oi := optInput.Forecast[h]
 			ou := optOutput.Strategy[h]

@@ -64,10 +64,10 @@ func New(broker string, port int16, username string, password string) *Ferroamp 
 	opts.SetPassword(password)
 	opts.SetAutoReconnect(true)
 	opts.OnConnect = func(client mqtt.Client) {
-		logger.Info("ferroamp MQTT connected")
+		logger.Info("ferroamp mqtt connected")
 	}
 	opts.OnConnectionLost = func(client mqtt.Client, err error) {
-		logger.Warn("ferroamp MQTT connection lost", slog.Any("error", err))
+		logger.Warn("ferroamp mqtt connection lost", slog.Any("error", err))
 	}
 
 	mqttLogger := slog.Default().With("module", "mqtt")
@@ -321,9 +321,9 @@ func (fa *Ferroamp) startPurgeRoutine() {
 }
 
 func (fa *Ferroamp) inactivityWatchdog() {
-	trafficOk := true
-	maxElapsed := 10 * time.Second
-	inactivityTimeout := 60 * time.Second
+	inWarnState, inErrorState := false, false
+	inactivityWarnTimeout := 10 * time.Second
+	inactivityErrorTimeout := 60 * time.Second
 	fa.lastMessageTime.Reset()
 	fa.stopMonitorCh = make(chan struct{})
 
@@ -333,21 +333,30 @@ func (fa *Ferroamp) inactivityWatchdog() {
 		for {
 			select {
 			case <-ticker.C:
-				if fa.lastMessageTime.Elapsed() >= inactivityTimeout {
-					if fa.OnInactivity != nil {
-						fa.OnInactivity()
-					}
-				}
-				if fa.lastMessageTime.Elapsed() >= maxElapsed {
-					if trafficOk {
-						// TODO: Maybe implement a reconnect if this turns out to be a problem.
-						fa.logger.Warn(fmt.Sprintf("no incoming mqtt traffic for the last %.0f seconds", maxElapsed.Seconds()))
-						trafficOk = false
+				// Warn if no traffic
+				if fa.lastMessageTime.Elapsed() >= inactivityWarnTimeout {
+					if !inWarnState {
+						inWarnState = true
+						fa.logger.Warn(fmt.Sprintf("no incoming mqtt traffic for the last %.0f seconds", inactivityWarnTimeout.Seconds()))
 					}
 				} else {
-					if !trafficOk {
+					if inWarnState {
+						inWarnState = false
 						fa.logger.Info("mqtt traffic is restored")
-						trafficOk = true
+					}
+				}
+				// Signal inactivity if no traffic for a longer time
+				if fa.lastMessageTime.Elapsed() >= inactivityErrorTimeout {
+					if !inErrorState {
+						inErrorState = true
+						fa.logger.Error(fmt.Sprintf("no incoming mqtt traffic for the last %.0f seconds", inactivityErrorTimeout.Seconds()))
+						if fa.OnInactivity != nil {
+							fa.OnInactivity()
+						}
+					}
+				} else {
+					if inErrorState {
+						inErrorState = false
 					}
 				}
 

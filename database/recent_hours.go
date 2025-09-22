@@ -55,10 +55,7 @@ func (h *RecentHours) Reload(ctx context.Context) error {
 	h.hours = make(map[hours.DateHour]RecentHour)
 
 	for _, ts := range tsRows {
-		h.hours[ts.When] = RecentHour{
-			When: ts.When,
-			Ts:   ts,
-		}
+		h.hours[ts.When] = RecentHour{When: ts.When, Ts: ts}
 	}
 
 	for _, fa := range faRows {

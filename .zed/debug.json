@@ -1,0 +1,18 @@
+[
+  {
+    "label": "Go (Delve)",
+    "adapter": "Delve",
+    "program": "$ZED_FILE",
+    "request": "launch",
+    "mode": "debug",
+    "envFile": ".env"
+  },
+  {
+    "label": "Run server",
+    "adapter": "Delve",
+    "request": "launch",
+    "mode": "debug",
+    "envFile": ".env",
+    "program": "./main.go"
+  }
+]

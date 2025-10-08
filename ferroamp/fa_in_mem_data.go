@@ -60,7 +60,7 @@ func (d *FaInMemData) SetEsm(esm *EsmMessage) {
 	d.data.Esm[esm.ID.Value] = *esm
 }
 
-/** Battery level in percent (stage of charge) */
+// Battery level in percent (stage of charge)
 func (d *FaInMemData) BatteryLevel() float64 {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -93,7 +93,7 @@ func (d *FaInMemData) BatteryStatuses() []int16 {
 	return statuses
 }
 
-/** Production lifetime in kWh */
+// Production lifetime in kWh
 func (d *FaInMemData) ProductionLifetime() float64 {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -110,7 +110,7 @@ func (d *FaInMemData) ProductionLifetime() float64 {
 	return calc.TwoDecimals(calc.MJ2Kwh(sum))
 }
 
-/** Solar power in kW */
+// Solar power in kW
 func (d *FaInMemData) SolarPower() float64 {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -127,21 +127,21 @@ func (d *FaInMemData) SolarPower() float64 {
 	return calc.TwoDecimals(sum / 1e3)
 }
 
-/** Grid power in kW */
+// Grid power in kW
 func (d *FaInMemData) GridPower() float64 {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return calc.TwoDecimals((d.data.Ehub.Pext.L1 + d.data.Ehub.Pext.L2 + d.data.Ehub.Pext.L3) / 1e3)
 }
 
-/** Battery power in kW. Charging = negative value, discharging = positive value */
+// Battery power in kW. Charging = negative value, discharging = positive value
 func (d *FaInMemData) BatteryPower() float64 {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return calc.TwoDecimals(d.data.Ehub.Pbat.Value / 1e3)
 }
 
-/** PV production since given state in kWh */
+// PV production since given state in kWh
 func (d *FaInMemData) ProducedSince(since FaData) float64 {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -151,14 +151,14 @@ func (d *FaInMemData) ProducedSince(since FaData) float64 {
 	// return calc.TwoDecimals(d.data.Ehub.LifetimeProduced() - from.Ehub.LifetimeProduced())
 }
 
-/** Consumption since given state in kWh */
+// Consumption since given state in kWh
 func (d *FaInMemData) ConsumedSince(since FaData) float64 {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return calc.TwoDecimals(d.data.Ehub.LifetimeConsumed() - since.Ehub.LifetimeConsumed())
 }
 
-/** Battery net load since given state in kWh */
+// Battery net load since given state in kWh
 func (d *FaInMemData) BatteryNetLoadSince(since FaData) float64 {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -168,7 +168,7 @@ func (d *FaInMemData) BatteryNetLoadSince(since FaData) float64 {
 	return calc.TwoDecimals(calc.MJ2Kwh(prod - cons))
 }
 
-/** Represents energy produced and exported to the external grid since given state in kWh */
+// Represents energy produced and exported to the external grid since given state in kWh
 func (d *FaInMemData) ExportedSince(since FaData) float64 {
 	return calc.MJ2Kwh(
 		d.data.Ehub.WextProdQ.L1 - since.Ehub.WextProdQ.L1 +
@@ -176,7 +176,7 @@ func (d *FaInMemData) ExportedSince(since FaData) float64 {
 			d.data.Ehub.WextProdQ.L3 - since.Ehub.WextProdQ.L3)
 }
 
-/** Represents energy consumed/imported from the external grid since given state in kWh */
+// Represents energy consumed/imported from the external grid since given state in kWh
 func (d *FaInMemData) ImportedSince(since FaData) float64 {
 	return calc.MJ2Kwh(
 		d.data.Ehub.WextConsQ.L1 - since.Ehub.WextConsQ.L1 +

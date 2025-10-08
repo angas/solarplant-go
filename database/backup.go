@@ -66,10 +66,10 @@ func (d *Database) Backup(ctx context.Context) error {
 	}
 
 	if err := os.Remove(dest); err != nil {
-		d.logger.Warn("could not remove original backup after compression", slog.String("error", err.Error()))
+		d.logger.WarnContext(ctx, "could not remove original backup after compression", slog.String("error", err.Error()))
 	}
 
-	d.logger.Info("database backup complete", slog.String("filename", zipPath))
+	d.logger.InfoContext(ctx, "database backup complete", slog.String("filename", zipPath))
 
 	return nil
 }

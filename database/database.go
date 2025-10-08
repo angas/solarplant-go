@@ -13,7 +13,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/angas/solarplant-go/hours"
+	"github.com/angas/solarplant-go/timex"
+
 	sqlite "modernc.org/sqlite"
 )
 
@@ -70,11 +71,6 @@ func New(ctx context.Context, path string) (*Database, error) {
 		path:   path,
 	}
 
-	err = d.migrate(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("database migration failed: %w", err)
-	}
-
 	return d, nil
 }
 
@@ -87,12 +83,13 @@ func (d *Database) Close() {
 	d.write.Close()
 }
 
-func (d *Database) migrate(ctx context.Context) error {
+func (d *Database) Migrate(ctx context.Context) error {
 	var currVer int
 	err := d.read.QueryRowContext(ctx, "PRAGMA user_version").Scan(&currVer)
 	if err != nil {
 		return fmt.Errorf("get current version: %w", err)
 	}
+	d.logger.InfoContext(ctx, fmt.Sprintf("current database version: %d", currVer))
 
 	files, err := migrationsDir.ReadDir("migrations")
 	if err != nil {
@@ -132,7 +129,7 @@ func (d *Database) migrate(ctx context.Context) error {
 			}
 		}
 
-		d.logger.Debug(fmt.Sprintf("applying migration %d", nextVer))
+		d.logger.InfoContext(ctx, fmt.Sprintf("applying migration %d", nextVer))
 
 		data, err := migrationsDir.ReadFile(path.Join("migrations", name))
 		if err != nil {
@@ -169,14 +166,10 @@ func (d *Database) migrate(ctx context.Context) error {
 	return nil
 }
 
-func (d *Database) purgeTable(ctx context.Context, table string, retentionDays int) error {
-	d.logger.Debug(fmt.Sprintf("purging table %s", table))
-	duration := 24 * time.Hour * time.Duration(retentionDays)
-	before := hours.FromTime(time.Now().Add(-duration))
-	res, err := d.write.ExecContext(ctx, fmt.Sprintf(`
-		DELETE FROM %s 
-		WHERE (date = ? AND hour < ?) OR date < ?`, table),
-		before.Date, before.Hour, before.Date)
+func (d *Database) purgeTable(ctx context.Context, table string, column string, retentionDays int) error {
+	d.logger.Debug("purging table", slog.String("table_name", table))
+	before := timex.UTCHour().SubHours(int64(24 * retentionDays))
+	res, err := d.write.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE %s <= ?", table, column), before.String())
 	if err != nil {
 		return fmt.Errorf("error when purging %s: %w", table, err)
 	}

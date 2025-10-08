@@ -4,16 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 
-	"github.com/angas/solarplant-go/hours"
+	"github.com/angas/solarplant-go/timex"
 )
 
 type TimeSeriesRow struct {
-	When                 hours.DateHour
+	Timestamp            timex.BucketTime
 	CloudCover           uint8
 	Temperature          float64
 	Precipitation        float64
-	EnergyPrice          float64
+	EnergyPriceAvg       float64
 	Production           float64
 	ProductionEstimated  float64
 	ProductionLifetime   float64
@@ -44,11 +45,11 @@ type DailyStats struct {
 
 func (d *Database) SaveTimeSeries(ctx context.Context, row TimeSeriesRow) error {
 	d.logger.Debug("saving time series",
-		"hour", row.When,
+		"timestamp", row.Timestamp,
 		"cloud_cover", row.CloudCover,
 		"temperature", row.Temperature,
 		"precipitation", row.Precipitation,
-		"energy_price", row.EnergyPrice,
+		"energy_price_avg", row.EnergyPriceAvg,
 		"production", row.Production,
 		"production_estimated", row.ProductionEstimated,
 		"production_lifetime", row.ProductionLifetime,
@@ -63,12 +64,11 @@ func (d *Database) SaveTimeSeries(ctx context.Context, row TimeSeriesRow) error 
 
 	_, err := d.write.ExecContext(ctx, `
 		INSERT INTO time_series (
-			date,
-			hour,
+			timestamp,
 			cloud_cover,
 			temperature,
 			precipitation,
-			energy_price,
+			energy_price_avg,
 			production,
 			production_estimated,
 			production_lifetime,
@@ -81,13 +81,12 @@ func (d *Database) SaveTimeSeries(ctx context.Context, row TimeSeriesRow) error 
 			cash_flow,
 			strategy
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		row.When.Date,
-		row.When.Hour,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.Timestamp.String(),
 		row.CloudCover,
 		row.Temperature,
 		row.Precipitation,
-		row.EnergyPrice,
+		row.EnergyPriceAvg,
 		row.Production,
 		row.ProductionEstimated,
 		row.ProductionLifetime,
@@ -102,44 +101,43 @@ func (d *Database) SaveTimeSeries(ctx context.Context, row TimeSeriesRow) error 
 	)
 
 	if err != nil {
-		return fmt.Errorf("saving time series: %w", err)
+		return fmt.Errorf("saving time series (%s): %w", row.Timestamp.String(), err)
 	}
 
 	return nil
 }
 
-/** Returns time series entries from this date and hour and every following same hour */
-func (d *Database) GetTimeSeriesForHour(ctx context.Context, dh hours.DateHour) ([]TimeSeriesRow, error) {
+// Returns time series entries from this hour and every day following
+func (d *Database) GetTimeSeriesForHour(ctx context.Context, hour timex.BucketTime) ([]TimeSeriesRow, error) {
 	rows, err := d.read.Query(`
-		SELECT 
-			date, 
-			hour, 
-			cloud_cover, 
-			temperature, 
-			precipitation, 
-			energy_price, 
-			production, 
+		SELECT
+			timestamp,
+			cloud_cover,
+			temperature,
+			precipitation,
+			energy_price_avg,
+			production,
 			production_estimated,
-			production_lifetime, 
-			consumption, 
+			production_lifetime,
+			consumption,
 			consumption_estimated,
 			grid_import,
 			grid_export,
-			battery_level, 
+			battery_level,
 			battery_net_load,
 			cash_flow,
 			strategy
 		FROM time_series
-		WHERE date >= ? AND hour = ?
-		ORDER BY date, hour ASC`,
-		dh.Date, dh.Hour)
+		WHERE timestamp >= ? AND STRFTIME('%H', timestamp) = ?
+		ORDER BY timestamp ASC`,
+		hour.String(), fmt.Sprintf("%02d", hour.Time().Hour()))
 	if err != nil {
-		return nil, fmt.Errorf("fetching time series for %s: %w", dh, err)
+		return nil, fmt.Errorf("fetching time series from hour %s: %w", hour.String(), err)
 	}
 
 	defer rows.Close()
 
-	ts, err := scanTimeSeriesHours(rows)
+	ts, err := d.scanTimeSeriesHours(rows)
 	if err != nil {
 		return ts, fmt.Errorf("scanning time series row: %w", err)
 	}
@@ -147,37 +145,36 @@ func (d *Database) GetTimeSeriesForHour(ctx context.Context, dh hours.DateHour) 
 	return ts, nil
 }
 
-func (d *Database) GetTimeSeriesFrom(ctx context.Context, dh hours.DateHour) ([]TimeSeriesRow, error) {
+func (d *Database) GetTimeSeriesFrom(ctx context.Context, from timex.BucketTime) ([]TimeSeriesRow, error) {
 	rows, err := d.read.QueryContext(ctx, `
-		SELECT 
-			date, 
-			hour, 
-			cloud_cover, 
-			temperature, 
-			precipitation, 
-			energy_price, 
-			production, 
+		SELECT
+			timestamp,
+			cloud_cover,
+			temperature,
+			precipitation,
+			energy_price_avg,
+			production,
 			production_estimated,
-			production_lifetime, 
-			consumption, 
+			production_lifetime,
+			consumption,
 			consumption_estimated,
 			grid_import,
 			grid_export,
-			battery_level, 
+			battery_level,
 			battery_net_load,
 			cash_flow,
 			strategy
 		FROM time_series
-		WHERE (date >= ? AND hour >= ?) OR (date > ?)
-		ORDER BY date DESC, hour DESC`,
-		dh.Date, dh.Hour, dh.Date)
+		WHERE timestamp >= ?
+		ORDER BY timestamp DESC`,
+		from.String())
 	if err != nil {
-		return nil, fmt.Errorf("fetching time series since %s: %w", dh, err)
+		return nil, fmt.Errorf("fetching time series from %s: %w", from.String(), err)
 	}
 
 	defer rows.Close()
 
-	ts, err := scanTimeSeriesHours(rows)
+	ts, err := d.scanTimeSeriesHours(rows)
 	if err != nil {
 		return ts, fmt.Errorf("scanning time series row: %w", err)
 	}
@@ -185,17 +182,17 @@ func (d *Database) GetTimeSeriesFrom(ctx context.Context, dh hours.DateHour) ([]
 	return ts, nil
 }
 
-func scanTimeSeriesHours(rows *sql.Rows) ([]TimeSeriesRow, error) {
-	var ts []TimeSeriesRow
+func (d *Database) scanTimeSeriesHours(rows *sql.Rows) ([]TimeSeriesRow, error) {
+	var tsr []TimeSeriesRow
 	for rows.Next() {
 		var t TimeSeriesRow
+		var tsStr string
 		err := rows.Scan(
-			&t.When.Date,
-			&t.When.Hour,
+			&tsStr,
 			&t.CloudCover,
 			&t.Temperature,
 			&t.Precipitation,
-			&t.EnergyPrice,
+			&t.EnergyPriceAvg,
 			&t.Production,
 			&t.ProductionEstimated,
 			&t.ProductionLifetime,
@@ -211,30 +208,40 @@ func scanTimeSeriesHours(rows *sql.Rows) ([]TimeSeriesRow, error) {
 			return nil, err
 		}
 
-		ts = append(ts, t)
+		t.Timestamp, err = timex.ParseBucketTime(tsStr, timex.BucketSizeHour)
+		if err != nil {
+			d.logger.Warn("parsing timestamp", slog.String("timestamp", tsStr), slog.String("error", err.Error()))
+			continue
+		}
+
+		tsr = append(tsr, t)
 	}
 
-	return ts, nil
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scanning time series rows: %w", err)
+	}
+
+	return tsr, nil
 }
 
 func (d *Database) GetDailyStats(ctx context.Context, noOfDays int) ([]DailyStats, error) {
 	rows, err := d.read.QueryContext(ctx, `
-		SELECT 
-			date, 
-			avg(cloud_cover),
-			avg(temperature),
-			avg(precipitation),
-			avg(energy_price),
-			sum(production),
-			avg(production-production_estimated),
-			sum(consumption),
-			avg(consumption-consumption_estimated),
-			sum(grid_import),
-			sum(grid_export),
-			sum(cash_flow)
+		SELECT
+			STRFTIME('%Y-%m-%d', timestamp) AS day,
+			AVG(cloud_cover),
+			AVG(temperature),
+			AVG(precipitation),
+			AVG(energy_price_avg),
+			SUM(production),
+			AVG(production-production_estimated),
+			SUM(consumption),
+			AVG(consumption-consumption_estimated),
+			SUM(grid_import),
+			SUM(grid_export),
+			SUM(cash_flow)
 		FROM time_series
-		GROUP BY date
-		ORDER BY date DESC
+		GROUP BY day
+		ORDER BY day DESC
 		LIMIT ?`,
 		noOfDays)
 	if err != nil {
@@ -269,5 +276,5 @@ func (d *Database) GetDailyStats(ctx context.Context, noOfDays int) ([]DailyStat
 }
 
 func (d *Database) PurgeTimeSeries(ctx context.Context, retentionDays int) error {
-	return d.purgeTable(ctx, "time_series", retentionDays)
+	return d.purgeTable(ctx, "time_series", "timestamp", retentionDays)
 }

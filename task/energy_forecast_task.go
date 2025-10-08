@@ -10,47 +10,46 @@ import (
 	"github.com/angas/solarplant-go/calc"
 	"github.com/angas/solarplant-go/config"
 	"github.com/angas/solarplant-go/database"
-	"github.com/angas/solarplant-go/hours"
+	"github.com/angas/solarplant-go/timex"
 )
 
 type historyAverage struct {
-	Production float64
-	/** Compensated for battery charging */
-	Consumption float64
+	Production  float64
+	Consumption float64 // Compensated for battery charging
 	CloudCover  float64
 	Temperature float64
 }
 
 func NewEnergyForecastTask(logger *slog.Logger, db *database.Database, config config.AppConfigEnergyForecast) func() {
 	return func() {
-		runEnergyForecastTask(logger, db, config)
+		runEnergyForecastTask(context.Background(), logger, db, config)
 	}
 }
 
-func runEnergyForecastTask(logger *slog.Logger, db *database.Database, cnfg config.AppConfigEnergyForecast) {
+func runEnergyForecastTask(ctx context.Context, logger *slog.Logger, db *database.Database, cnfg config.AppConfigEnergyForecast) {
 	logger.Debug("running energy forecast task...")
 
-	hour := hours.FromNow()
+	startAt := timex.UTCHour()
 	rows := make([]database.EnergyForecastRow, 0, int(cnfg.HoursAhead))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	for range int(cnfg.HoursAhead) {
-		hour = hour.Add(1)
+		startAt = startAt.AddHours(1)
 
-		forecast, err := db.GetWeatherForecast(ctx, hour)
+		forecast, err := db.GetWeatherForecast(ctx, startAt)
 		if err != nil {
 			if err == sql.ErrNoRows {
-				logger.Warn("energy forecast task problem, forecast not found", "hour", hour.String())
+				logger.WarnContext(ctx, "energy forecast task problem, forecast not found", "startAt", startAt.String())
 			} else {
-				logger.Error("energy forecast task error", slog.Any("error", err))
+				logger.ErrorContext(ctx, "energy forecast task error", slog.Any("error", err))
 			}
 		}
 
-		avg, err := calcHistoryAverage(ctx, db, cnfg, hour)
+		avg, err := calcHistoryAverage(ctx, db, cnfg, startAt)
 		if err != nil {
-			logger.Error("energy forecast task error, calculate history average", slog.Any("error", err))
+			logger.ErrorContext(ctx, "energy forecast task error, calculate history average", slog.Any("error", err))
 		}
 
 		// Normalize the production based on average cloud cover during the historical hours
@@ -59,7 +58,7 @@ func runEnergyForecastTask(logger *slog.Logger, db *database.Database, cnfg conf
 		estProduction := avgProduction - avgProduction*cnfg.CloudCoverImpact*float64(forecast.CloudCover)/8.0
 
 		row := database.EnergyForecastRow{
-			When:        hour,
+			StartAt:     startAt,
 			Production:  calc.TwoDecimals(estProduction),
 			Consumption: calc.TwoDecimals(avg.Consumption),
 		}
@@ -68,15 +67,15 @@ func runEnergyForecastTask(logger *slog.Logger, db *database.Database, cnfg conf
 	}
 
 	if err := db.SaveEnergyForecast(ctx, rows); err != nil {
-		logger.Error("energy forecast task error", slog.Any("error", err))
+		logger.ErrorContext(ctx, "energy forecast task error", slog.Any("error", err))
 		return
 	}
 
-	logger.Debug("energy forecast task done", slog.Int("noOfHoursUpdated", len(rows)))
+	logger.DebugContext(ctx, "energy forecast task done", slog.Int("noOfHoursUpdated", len(rows)))
 }
 
-func calcHistoryAverage(ctx context.Context, db *database.Database, config config.AppConfigEnergyForecast, hour hours.DateHour) (historyAverage, error) {
-	hour = hour.Sub(24 * config.HistoricalDays)
+func calcHistoryAverage(ctx context.Context, db *database.Database, config config.AppConfigEnergyForecast, hour timex.BucketTime) (historyAverage, error) {
+	hour = hour.SubHours(int64(24 * config.HistoricalDays))
 
 	tsh, err := db.GetTimeSeriesForHour(ctx, hour)
 	avg := historyAverage{}

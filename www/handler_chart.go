@@ -7,13 +7,13 @@ import (
 	"net/http"
 
 	"github.com/angas/solarplant-go/database"
-	"github.com/angas/solarplant-go/hours"
+	"github.com/angas/solarplant-go/timex"
 	"github.com/angas/solarplant-go/www/chartjs"
 )
 
 func NewChartHandler(logger *slog.Logger, db *database.Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		midnight := hours.FromMidnight()
+		midnight := timex.CETMidnight()
 
 		timeSeries, err := db.GetTimeSeriesFrom(r.Context(), midnight)
 		if err != nil {
@@ -21,24 +21,24 @@ func NewChartHandler(logger *slog.Logger, db *database.Database) http.HandlerFun
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		findTs := func(dh hours.DateHour) database.TimeSeriesRow {
+		findTs := func(bt timex.BucketTime) database.TimeSeriesRow {
 			for _, t := range timeSeries {
-				if t.When.String() == dh.String() {
+				if t.Timestamp == bt {
 					return t
 				}
 			}
 			return database.TimeSeriesRow{}
 		}
 
-		energyPrice, err := db.GetEnergyPriceFrom(r.Context(), midnight)
+		energyPrice, err := db.GetHourlyAvgEnergyPriceFrom(r.Context(), midnight)
 		if err != nil {
 			logger.Error("handling chart request", slog.Any("error", err))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		findEp := func(dh hours.DateHour) database.EnergyPriceRow {
+		findEp := func(bt timex.BucketTime) database.EnergyPriceRow {
 			for _, ep := range energyPrice {
-				if ep.When.String() == dh.String() {
+				if ep.StartAt == bt {
 					return ep
 				}
 			}
@@ -48,12 +48,12 @@ func NewChartHandler(logger *slog.Logger, db *database.Database) http.HandlerFun
 		// Chart 1: Battery Level and Energy Price
 		chart1 := chartjs.NewChart("")
 		for i := range chartjs.NoOfHours {
-			if ts := findTs(midnight.Add(i)); ts.When.IsZero() {
+			if ts := findTs(midnight.AddHours(int64(i))); ts.Timestamp.Empty() {
 				chart1.Data.Datasets[0].Data[i] = nil
 			} else {
 				chart1.Data.Datasets[0].Data[i] = chartjs.FixedFloat64(ts.BatteryLevel, 2)
 			}
-			if ep := findEp(midnight.Add(i)); ep.When.IsZero() {
+			if ep := findEp(midnight.AddHours(int64(i))); ep.StartAt.Empty() {
 				chart1.Data.Datasets[1].Data[i] = nil
 			} else {
 				chart1.Data.Datasets[1].Data[i] = chartjs.FixedFloat64(ep.Price, 2)
@@ -69,7 +69,7 @@ func NewChartHandler(logger *slog.Logger, db *database.Database) http.HandlerFun
 		chart2 := chartjs.NewChart("")
 		maxVal := 0.0
 		for i := range chartjs.NoOfHours {
-			if ts := findTs(midnight.Add(i)); ts.When.IsZero() {
+			if ts := findTs(midnight.AddHours(int64(i))); ts.Timestamp.Empty() {
 				chart2.Data.Datasets[0].Data[i] = nil
 				chart2.Data.Datasets[1].Data[i] = nil
 			} else {

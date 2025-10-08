@@ -7,7 +7,7 @@ import (
 	_ "embed"
 
 	"github.com/angas/solarplant-go/database"
-	"github.com/angas/solarplant-go/hours"
+	"github.com/angas/solarplant-go/timex"
 	"github.com/angas/solarplant-go/types/maybe"
 )
 
@@ -38,7 +38,7 @@ func NewDailyStatsHandler(logger *slog.Logger, db *database.Database, tm *Templa
 			return
 		}
 
-		thisHour := hours.FromNow()
+		thisHour := timex.UTCHour()
 		templRows := make([]dailyStatsTemplRow, len(rows))
 		for i, row := range rows {
 			templRows[i] = dailyStatsTemplRow{
@@ -54,7 +54,7 @@ func NewDailyStatsHandler(logger *slog.Logger, db *database.Database, tm *Templa
 				TotGridImport:    maybe.Some(row.TotGridImport),
 				TotGridExport:    maybe.Some(row.TotGridExport),
 				TotCashFlow:      maybe.Some(row.TotCashFlow),
-				IsToday:          row.Date == thisHour.Date,
+				IsToday:          row.Date == thisHour.DateOnlyString(),
 			}
 		}
 

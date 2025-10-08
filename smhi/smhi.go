@@ -1,23 +1,27 @@
 package smhi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"time"
 )
 
-func Get(lon float64, lat float64) ([]WetherForecast, error) {
+func Get(ctx context.Context, lon float64, lat float64) ([]WeatherForecast, error) {
 	url := fmt.Sprintf(
 		"%s/api/category/pmp3g/version/2/geotype/point/lon/%0.4f/lat/%0.4f/data.json",
 		BASE_URL, lon, lat)
 
 	slog.Default().Info("fetching forecast from SMHI...", "url", url)
 
-	req, _ := http.NewRequest("GET", url, nil)
-	client := http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create smhi request: %w", err)
+	}
+
+	client := &http.Client{}
 	res, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("error getting SMHI forecast: %v", err)
@@ -34,9 +38,9 @@ func Get(lon float64, lat float64) ([]WetherForecast, error) {
 		return nil, fmt.Errorf("error unmarshaling SMHI json: %v", err)
 	}
 
-	result := make([]WetherForecast, 0)
+	result := make([]WeatherForecast, 0)
 	for _, entry := range smhi.TimeSeries {
-		result = append(result, WetherForecast{
+		result = append(result, WeatherForecast{
 			Hour:          entry.ValidTime,
 			CloudCover:    uint8(getParameter(entry.Parameters, "tcc_mean")),
 			Temperature:   getParameter(entry.Parameters, "t"),

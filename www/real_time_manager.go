@@ -8,7 +8,7 @@ import (
 	"github.com/angas/solarplant-go/config"
 	"github.com/angas/solarplant-go/database"
 	"github.com/angas/solarplant-go/ferroamp"
-	"github.com/angas/solarplant-go/hours"
+	"github.com/angas/solarplant-go/timex"
 	"github.com/angas/solarplant-go/types/maybe"
 )
 
@@ -29,7 +29,7 @@ type RealTimeManager struct {
 	faInMem      *ferroamp.FaInMemData
 	recentHours  *database.RecentHours
 	config       config.AppConfigEnergyPrice
-	energyPrices map[hours.DateHour]float64
+	energyPrices map[timex.BucketTime]float64
 }
 
 func NewRealTimeManager(
@@ -48,19 +48,18 @@ func NewRealTimeManager(
 
 func (m *RealTimeManager) Get(ctx context.Context) (RealTimeData, error) {
 	rtd := RealTimeData{}
-	thisHour := hours.FromNow()
-	midnight := hours.FromMidnight()
+	thisHour := timex.UTCHour()
 
 	ep, ok := m.energyPrices[thisHour]
 	if !ok {
-		eps, err := m.db.GetEnergyPriceFrom(ctx, midnight)
+		eps, err := m.db.GetEnergyPriceFrom(ctx, timex.UTCMidnight())
 		if err != nil {
 			m.logger.Error("error getting energy prices", slog.Any("error", err))
 		} else {
-			m.energyPrices = make(map[hours.DateHour]float64)
+			m.energyPrices = make(map[timex.BucketTime]float64)
 			for _, ep := range eps {
-				m.energyPrices[ep.When] = ep.Price
-				if ep.When == thisHour {
+				m.energyPrices[ep.StartAt] = ep.Price
+				if ep.StartAt == thisHour {
 					rtd.EnergyPrice = maybe.Some(ep.Price)
 					break
 				}
@@ -70,7 +69,7 @@ func (m *RealTimeManager) Get(ctx context.Context) (RealTimeData, error) {
 		rtd.EnergyPrice = maybe.Some(ep)
 	}
 
-	recentHour, ok := m.recentHours.Get(thisHour.Sub(1))
+	recentHour := m.recentHours.Get(thisHour.SubHours(1))
 	if ok {
 		imp := m.faInMem.ImportedSince(recentHour.Fa.Data)
 		exp := m.faInMem.ExportedSince(recentHour.Fa.Data)

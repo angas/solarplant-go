@@ -38,7 +38,7 @@ CREATE TABLE weather_forecast (
 );
 CREATE TRIGGER weather_forecast_updated AFTER UPDATE ON weather_forecast
 BEGIN
-  UPDATE weather_forecast SET updated = (strftime('%s','now')) 
+  UPDATE weather_forecast SET updated = (strftime('%s','now'))
   WHERE rowid = NEW.rowid;
 END;
 
@@ -46,13 +46,13 @@ CREATE TABLE energy_forecast (
   date CHAR(10) NOT NULL,
   hour INTEGER NOT NULL,
   production REAL NOT NULL,
-  consumption REAL NOT NULL,		
+  consumption REAL NOT NULL,
   created INTEGER(4) NOT NULL DEFAULT (strftime('%s','now')),
   updated INTEGER(4) NOT NULL DEFAULT (strftime('%s','now')),
   CONSTRAINT energy_forecast_pk PRIMARY KEY (date, hour));
 CREATE TRIGGER energy_forecast_updated AFTER UPDATE ON energy_forecast
 BEGIN
-  UPDATE energy_forecast SET updated = (strftime('%s','now')) 
+  UPDATE energy_forecast SET updated = (strftime('%s','now'))
   WHERE rowid = NEW.rowid;
 END;
 
@@ -64,9 +64,9 @@ CREATE TABLE planning (
   updated INTEGER(4) NOT NULL DEFAULT (strftime('%s','now')),
   CONSTRAINT planning_pk PRIMARY KEY (date, hour)
 );
-CREATE TRIGGER planning_updated AFTER	UPDATE ON planning 
+CREATE TRIGGER planning_updated AFTER	UPDATE ON planning
 BEGIN
-  UPDATE planning SET updated = (strftime('%s','now')) 
+  UPDATE planning SET updated = (strftime('%s','now'))
   WHERE rowid = NEW.rowid;
 END;
 
@@ -76,4 +76,3 @@ CREATE TABLE fa_snapshot (
   data TEXT NOT NULL,
   CONSTRAINT fa_snapshot_pk PRIMARY KEY (date, hour)
 );
-

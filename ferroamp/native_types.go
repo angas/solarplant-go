@@ -129,7 +129,7 @@ var esoFaultsCodes = map[uint16]string{
 	0x4000: "Not used",
 }
 
-/** WARNING: Don't use this, values aren't updated as they should */
+// WARNING: Don't use this, values aren't updated as they should
 func (ehub *EhubMessage) LifetimeProduced() float64 {
 	return calc.MJ2Kwh(ehub.WloadProdQ.L1 + ehub.WloadProdQ.L2 + ehub.WloadProdQ.L3)
 }

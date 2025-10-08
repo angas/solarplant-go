@@ -7,56 +7,58 @@ import (
 
 	"github.com/angas/solarplant-go/config"
 	"github.com/angas/solarplant-go/database"
-	"github.com/angas/solarplant-go/hours"
 	"github.com/angas/solarplant-go/smhi"
+	"github.com/angas/solarplant-go/timex"
 )
 
 func NewWeatherForecastTask(logger *slog.Logger, db *database.Database, config config.AppConfigWeatherForecast) func() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
+	ctx := context.Background()
 	if needImmediateForecastUpdate(ctx, db) {
 		logger.Info("need an immediate update of weather forecast")
-		runForecastTask(logger, db, config)
+		runForecastTask(ctx, logger, db, config)
 	} else {
 		logger.Debug("no need for immediate update of weather forecast")
 	}
 
 	return func() {
-		runForecastTask(logger, db, config)
+		runForecastTask(ctx, logger, db, config)
 	}
 }
 
-func runForecastTask(logger *slog.Logger, db *database.Database, config config.AppConfigWeatherForecast) {
-	logger.Debug("running weather forecast task...")
+func runForecastTask(ctx context.Context, logger *slog.Logger, db *database.Database, config config.AppConfigWeatherForecast) {
+	logger.DebugContext(ctx, "running weather forecast task...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	fc, err := smhi.Get(config.Longitude, config.Latitude)
+	forecast, err := smhi.Get(ctx, config.Longitude, config.Latitude)
 	if err != nil {
-		logger.Error("weather forecast task error", slog.Any("error", err))
+		logger.ErrorContext(ctx, "smhi weather forecast task error", slog.Any("error", err))
 	} else {
-		rows := make([]database.WeatherForecastRow, len(fc))
-		for i, ep := range fc {
-			rows[i] = database.WeatherForecastRow{
-				When:          hours.FromTime(ep.Hour),
-				CloudCover:    ep.CloudCover,
-				Temperature:   ep.Temperature,
-				Precipitation: ep.Precipitation,
+		rows := []database.WeatherForecastRow{}
+		for _, f := range forecast {
+			startAt := timex.BucketTime(f.Hour)
+			if !startAt.IsValid(timex.BucketSizeHour) {
+				logger.WarnContext(ctx, "invalid smhi forecast start_at", slog.Any("startAt", f.Hour))
+				continue
 			}
+			rows = append(rows, database.WeatherForecastRow{
+				StartAt:       startAt,
+				CloudCover:    f.CloudCover,
+				Temperature:   f.Temperature,
+				Precipitation: f.Precipitation,
+			})
 		}
 		if err = db.SaveForecast(ctx, rows); err != nil {
-			logger.Error("weather forecast task error", slog.Any("error", err))
+			logger.ErrorContext(ctx, "weather forecast task error", slog.Any("error", err))
 		}
+		logger.InfoContext(ctx, "weather forecast task done", slog.Int("noOfHoursUpdated", len(rows)))
 	}
-
-	logger.Info("weather forecast task done", slog.Int("noOfHoursUpdated", len(fc)))
 }
 
 func needImmediateForecastUpdate(ctx context.Context, db *database.Database) bool {
-	dh := hours.FromNow().Add(12)
-	if _, err := db.GetWeatherForecast(ctx, dh); err != nil {
+	startAt := timex.UTCMidnight().AddHours(12)
+	if _, err := db.GetWeatherForecast(ctx, startAt); err != nil {
 		return true
 	}
 	return false

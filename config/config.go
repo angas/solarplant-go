@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/angas/solarplant-go/logging"
 	"github.com/spf13/viper"
@@ -147,6 +148,8 @@ type AppConfig struct {
 	Planner                  AppConfigPlanner         `mapstructure:"planner"`
 	BatteryRegulatorStrategy BatteryRegulatorStrategy `mapstructure:"battery_regulator_strategy"`
 	Logging                  AppConfigLogging         `mapstructure:"logging"`
+	TimeZone                 *string                  `mapstructure:"timezone"`
+	Location                 *time.Location
 }
 
 func Load(path string) (*AppConfig, error) {
@@ -168,6 +171,16 @@ func Load(path string) (*AppConfig, error) {
 
 	if err := viper.Unmarshal(&c); err != nil {
 		return nil, fmt.Errorf("unable to unmarshal config file: %w", err)
+	}
+
+	if c.TimeZone != nil {
+		loc, err := time.LoadLocation(*c.TimeZone)
+		if err != nil {
+			return nil, fmt.Errorf("invalid timezone %s: %w", *c.TimeZone, err)
+		}
+		c.Location = loc
+	} else {
+		c.Location = time.UTC // default to UTC
 	}
 
 	return &c, nil

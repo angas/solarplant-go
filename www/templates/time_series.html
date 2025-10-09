@@ -33,7 +33,7 @@
       0}}class="faded"
       {{end}}
     >
-      <td style="white-space: nowrap">{{ .Timestamp.CETDateHourString }}</td>
+      <td style="white-space: nowrap">{{ LocalDateHour .Timestamp }}</td>
       <td>{{ MaybeUint8 .CloudCover }}</td>
       <td>{{ MaybeFloat64 .Temperature 1 }}</td>
       <td>{{ MaybeFloat64 .EnergyPriceAvg 4 }}</td>

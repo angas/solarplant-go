@@ -3,6 +3,7 @@ package www
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	_ "embed"
 
@@ -27,7 +28,7 @@ type dailyStatsTemplRow struct {
 	IsToday          bool
 }
 
-func NewDailyStatsHandler(logger *slog.Logger, db *database.Database, tm *TemplateManager) http.HandlerFunc {
+func NewDailyStatsHandler(logger *slog.Logger, db *database.Database, tm *TemplateManager, loc *time.Location) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 
@@ -54,7 +55,7 @@ func NewDailyStatsHandler(logger *slog.Logger, db *database.Database, tm *Templa
 				TotGridImport:    maybe.Some(row.TotGridImport),
 				TotGridExport:    maybe.Some(row.TotGridExport),
 				TotCashFlow:      maybe.Some(row.TotCashFlow),
-				IsToday:          row.Date == thisHour.DateOnlyString(),
+				IsToday:          row.Date == thisHour.DateOnlyString(loc),
 			}
 		}
 

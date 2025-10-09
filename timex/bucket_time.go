@@ -14,20 +14,6 @@ const (
 	BucketSizeDay       = BucketSize(time.Hour * 24)
 )
 
-var (
-	// Sweden has only one time zone. The country observes Central European Time (CET) as standard time.
-	// When Daylight Saving Time (DST) is in force, Swedish clocks run on Central European Summer Time (CEST).
-	stockholmLoc *time.Location
-)
-
-func init() {
-	var err error
-	stockholmLoc, err = time.LoadLocation("Europe/Stockholm")
-	if err != nil {
-		panic(fmt.Sprintf("failed to load Stockholm location: %v", err))
-	}
-}
-
 // A BucketTime represents a time bucket (with a specific granularity).
 // It could be a starting point for a time period, such as a 15-minute energy price interval
 // or an ending point of an hour of produced energy.
@@ -57,10 +43,9 @@ func UTCMidnight() BucketTime {
 	return BucketTime(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC))
 }
 
-func CETMidnight() BucketTime {
+func LocalMidnight(loc *time.Location) BucketTime {
 	now := time.Now()
-	midnightStockholm := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, stockholmLoc).UTC()
-	return BucketTime(midnightStockholm)
+	return BucketTime(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC())
 }
 
 // Returns a string representation of the Bucket in RFC3339 format.
@@ -68,11 +53,13 @@ func (bt BucketTime) String() string {
 	return time.Time(bt).Format(time.RFC3339)
 }
 
+// Returns a BucketTime truncated to the start of the current hour in UTC.
 func (bt BucketTime) TruncToHour() BucketTime {
 	t := bt.Time()
 	return BucketTime(time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, time.UTC))
 }
 
+// Returns a BucketTime truncated to the start of the day in UTC.
 func (bt BucketTime) TruncToMidnight() BucketTime {
 	t := bt.Time()
 	return BucketTime(time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC))
@@ -107,12 +94,8 @@ func (bt BucketTime) After(b BucketTime) bool {
 	return bt.Time().After(b.Time())
 }
 
-func (bt BucketTime) DateOnlyString() string {
-	return bt.Time().Format("2006-01-02")
-}
-
-func (bt BucketTime) CETDateHourString() string {
-	return bt.Time().In(stockholmLoc).Format("2006-01-02 15")
+func (bt BucketTime) DateOnlyString(loc *time.Location) string {
+	return bt.Time().In(loc).Format("2006-01-02")
 }
 
 func (bt BucketTime) IsValid(g BucketSize) bool {

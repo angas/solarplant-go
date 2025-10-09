@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
+	"time"
 
+	"github.com/angas/solarplant-go/timex"
 	"github.com/angas/solarplant-go/types/maybe"
 	"github.com/fsnotify/fsnotify"
 )
@@ -19,35 +21,45 @@ var templatesDirEmbed embed.FS
 
 type TemplateManager struct {
 	templates *template.Template
-	mutex     sync.RWMutex
+	mu        sync.RWMutex
+	location  *time.Location
 	logger    *slog.Logger
 }
 
-var funcMap = template.FuncMap{
-	"Subtract": func(a, b int) int { return a - b },
-	"MaybeString": func(m maybe.Maybe[string]) string {
-		if m.IsValid() {
-			return m.Value()
-		}
-		return "-"
-	},
-	"MaybeUint8": func(m maybe.Maybe[uint8]) string {
-		if m.IsValid() {
-			return fmt.Sprintf("%d", m.Value())
-		}
-		return "-"
-	},
-	"MaybeFloat64": func(m maybe.Maybe[float64], decimals int) string {
-		if m.IsValid() {
-			return fmt.Sprintf("%."+fmt.Sprintf("%d", decimals)+"f", m.Value())
-		}
-		return "-"
-	},
+func funcMap(loc *time.Location) template.FuncMap {
+	return template.FuncMap{
+		"Subtract": func(a, b int) int { return a - b },
+		"MaybeString": func(m maybe.Maybe[string]) string {
+			if m.IsValid() {
+				return m.Value()
+			}
+			return "-"
+		},
+		"MaybeUint8": func(m maybe.Maybe[uint8]) string {
+			if m.IsValid() {
+				return fmt.Sprintf("%d", m.Value())
+			}
+			return "-"
+		},
+		"MaybeFloat64": func(m maybe.Maybe[float64], decimals int) string {
+			if m.IsValid() {
+				return fmt.Sprintf("%."+fmt.Sprintf("%d", decimals)+"f", m.Value())
+			}
+			return "-"
+		},
+		"LocalDateHour": func(bt timex.BucketTime) string {
+			if bt.Empty() {
+				return "-"
+			}
+			return bt.Time().In(loc).Format("2006-01-02 15")
+		},
+	}
 }
 
-func NewTemplateManager(logger *slog.Logger, extDir *string) (*TemplateManager, error) {
+func NewTemplateManager(logger *slog.Logger, extDir *string, location *time.Location) (*TemplateManager, error) {
 	tm := &TemplateManager{
-		logger: logger,
+		location: location,
+		logger:   logger,
 	}
 
 	if extDir != nil {
@@ -63,6 +75,7 @@ func NewTemplateManager(logger *slog.Logger, extDir *string) (*TemplateManager, 
 
 func (tm *TemplateManager) loadInternalTemplates() error {
 	tm.logger.Debug("loading embedded templates...")
+	funcMap := funcMap(tm.location)
 	tmpl, err := template.New("").Funcs(funcMap).ParseFS(templatesDirEmbed, "templates/*.html")
 	if err != nil {
 		return fmt.Errorf("failed to parse templates: %w", err)
@@ -76,14 +89,15 @@ func (tm *TemplateManager) loadExternalTemplates(extDir string) error {
 	reload := func() error {
 		tm.logger.Debug("loading external templates...")
 		pattern := filepath.Join(templatesDir, "*.html")
+		funcMap := funcMap(tm.location)
 		tmpl, err := template.New("").Funcs(funcMap).ParseGlob(pattern)
 		if err != nil {
 			return fmt.Errorf("failed to parse templates: %w", err)
 		}
 
-		tm.mutex.Lock()
+		tm.mu.Lock()
 		tm.templates = tmpl
-		tm.mutex.Unlock()
+		tm.mu.Unlock()
 		return nil
 	}
 
@@ -123,9 +137,9 @@ func (tm *TemplateManager) loadExternalTemplates(extDir string) error {
 func (tm *TemplateManager) Execute(name string, data interface{}) (bytes.Buffer, error) {
 	var buf bytes.Buffer
 
-	tm.mutex.RLock()
+	tm.mu.RLock()
 	err := tm.templates.ExecuteTemplate(&buf, name, data)
-	tm.mutex.RUnlock()
+	tm.mu.RUnlock()
 
 	if err != nil {
 		return bytes.Buffer{}, fmt.Errorf("failed to execute template %s: %w", name, err)
@@ -135,9 +149,9 @@ func (tm *TemplateManager) Execute(name string, data interface{}) (bytes.Buffer,
 }
 
 func (tm *TemplateManager) ExecuteToWriter(name string, data any, wr *http.ResponseWriter) error {
-	tm.mutex.RLock()
+	tm.mu.RLock()
 	err := tm.templates.ExecuteTemplate(*wr, name, data)
-	tm.mutex.RUnlock()
+	tm.mu.RUnlock()
 
 	if err != nil {
 		return fmt.Errorf("failed to execute template %s: %w", name, err)

@@ -5,15 +5,16 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"time"
 
 	"github.com/angas/solarplant-go/database"
 	"github.com/angas/solarplant-go/timex"
 	"github.com/angas/solarplant-go/www/chartjs"
 )
 
-func NewChartHandler(logger *slog.Logger, db *database.Database) http.HandlerFunc {
+func NewChartHandler(logger *slog.Logger, db *database.Database, loc *time.Location) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		midnight := timex.CETMidnight()
+		midnight := timex.LocalMidnight(loc)
 
 		timeSeries, err := db.GetTimeSeriesFrom(r.Context(), midnight)
 		if err != nil {

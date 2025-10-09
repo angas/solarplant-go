@@ -20,7 +20,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.24"
+          go-version: "1.25"
 
       - name: Install dependencies
         run: go get .
@@ -39,13 +39,13 @@ jobs:
             "linux,amd64"
             "linux,arm64"
           )
-                                 
+
           for ARCH in "${ARCHITECTURES[@]}"; do
-            IFS=',' read -r OS PLATFORM <<< "$ARCH"            
+            IFS=',' read -r OS PLATFORM <<< "$ARCH"
             BINARY_NAME="${MODULE_NAME}_${OS}_${PLATFORM}_${{github.ref_name}}"
             echo "Building for ${OS}/${PLATFORM}..."
             GOOS=$OS GOARCH=$PLATFORM go build -ldflags="-X main.Version=${{github.ref_name}}" -o "./bin/${BINARY_NAME}" .
-            sha256sum "./bin/${BINARY_NAME}" > "./bin/${BINARY_NAME}.sha256"            
+            sha256sum "./bin/${BINARY_NAME}" > "./bin/${BINARY_NAME}.sha256"
           done
 
           cd ./bin
@@ -80,31 +80,31 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: false
-  
+
   build-and-push-image:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
       attestations: write
-      id-token: write    
+      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Log in to the Container registry
         uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          
+
       - name: Build and push Docker image
         id: push
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
@@ -121,4 +121,4 @@ jobs:
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
           subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true   
+          push-to-registry: true

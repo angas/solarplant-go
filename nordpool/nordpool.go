@@ -9,15 +9,15 @@ import (
 	"slices"
 	"time"
 
-	"github.com/angas/solarplant-go/hours"
+	"github.com/angas/solarplant-go/timex"
 	"github.com/angas/solarplant-go/types"
 )
 
 type nordpoolData struct {
 	Version          int `json:"version"`
 	MultiAreaEntries []struct {
-		DeliveryStart time.Time          `json:"deliveryStart"`
-		DeliveryEnd   time.Time          `json:"deliveryEnd"`
+		DeliveryStart string             `json:"deliveryStart"`
+		DeliveryEnd   string             `json:"deliveryEnd"`
 		EntryPerArea  map[string]float64 `json:"entryPerArea"`
 	} `json:"multiAreaEntries"`
 }
@@ -61,41 +61,41 @@ func (n Nordpool) getEnergyPrices(ctx context.Context, date time.Time) ([]types.
 		return nil, fmt.Errorf("failed to create nordpool request: %w", err)
 	}
 	client := &http.Client{}
-	resp, err := client.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch nordpool prices: %w", err)
 	}
-	defer resp.Body.Close()
+	defer res.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
+	if res.StatusCode == http.StatusNotFound {
 		return []types.EnergyPrice{}, nil
 	}
 
-	if resp.StatusCode == http.StatusNoContent {
+	if res.StatusCode == http.StatusNoContent {
 		return []types.EnergyPrice{}, nil
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status code from nordpool: %d", resp.StatusCode)
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code from nordpool: %d", res.StatusCode)
 	}
 
 	var data nordpoolData
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := json.NewDecoder(res.Body).Decode(&data); err != nil {
 		return nil, fmt.Errorf("failed to decode nordpool response: %w", err)
 	}
 
 	prices := make([]types.EnergyPrice, 0)
 	for _, entry := range data.MultiAreaEntries {
-		hour := hours.FromTime(entry.DeliveryStart)
-		if slices.ContainsFunc(prices, func(p types.EnergyPrice) bool { return p.Hour == hour }) {
+		start, err := timex.ParseBucketTime(entry.DeliveryStart, timex.BucketSize15Minutes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse nordpool start time (%s): %w", entry.DeliveryStart, err)
+		}
+		if slices.ContainsFunc(prices, func(p types.EnergyPrice) bool { return p.StartAt == start }) {
 			continue
 		}
 		price, ok := entry.EntryPerArea[n.area]
 		if ok {
-			prices = append(prices, types.EnergyPrice{
-				Hour:  hour,
-				Price: normalizePrice(price),
-			})
+			prices = append(prices, types.EnergyPrice{StartAt: start, Price: normalizePrice(price)})
 		}
 	}
 

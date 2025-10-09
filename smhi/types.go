@@ -6,7 +6,7 @@ import (
 
 const BASE_URL = "https://opendata-download-metfcst.smhi.se"
 
-type WetherForecast struct {
+type WeatherForecast struct {
 	Hour time.Time
 	/**
 	The total cloud cover, how big part of the sky is covered by clouds, (0-8 octas)
@@ -21,9 +21,9 @@ type WetherForecast struct {
 	8 - 8/8 of sky completely covered, no breaks Overcast
 	*/
 	CloudCover uint8
-	/** Air temperature (°C) */
+	// Air temperature (°C)
 	Temperature float64
-	/** Mean precipitation intensity (mm/h) */
+	// Mean precipitation intensity (mm/h)
 	Precipitation float64
 }
 

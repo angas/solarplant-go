@@ -57,9 +57,9 @@ func costForPermutation(input Input, permutation []Strategy) (float64, float64) 
 	totCost := 0.0
 	disqualified := false
 
-	for hour, strategy := range permutation {
-		price := input.Forecast[hour].EnergyPrice
-		balance := input.Forecast[hour].EnergyBalance
+	for i, strategy := range permutation {
+		price := input.Forecast[i].EnergyPrice
+		balance := input.Forecast[i].EnergyBalance
 
 		switch strategy {
 		case StrategyDefault:

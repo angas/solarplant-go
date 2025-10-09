@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/angas/solarplant-go/optimize"
+	"github.com/angas/solarplant-go/timex"
 
 	"github.com/angas/solarplant-go/config"
 	"github.com/angas/solarplant-go/database"
 	"github.com/angas/solarplant-go/ferroamp"
-	"github.com/angas/solarplant-go/hours"
 )
 
 type BatteryRegulatorStrategy struct {
@@ -94,17 +94,17 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 	battPwr := br.faData.BatteryPower()
 	battStatus := br.faData.BatteryStatuses()
 
-	hour := hours.FromNow()
-	planning, err := br.db.GetPlanning(ctx, hour)
+	startAt := timex.UTCHour()
+	planning, err := br.db.GetPlanning(ctx, startAt)
 	if err != nil {
 		planning = database.PlanningRow{
-			When:     hour,
+			StartAt:  startAt,
 			Strategy: optimize.StrategyDefault.String(),
 		}
 		if !br.usingFallbackStrategy {
 			br.usingFallbackStrategy = true
 			br.logger.Warn("failed to get planning for hour, using a fallback strategy",
-				slog.String("hour", hour.String()),
+				slog.String("startAt", startAt.String()),
 				slog.String("strategy", planning.Strategy),
 				slog.Any("error", err))
 		}
@@ -112,7 +112,7 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 		if br.usingFallbackStrategy {
 			br.usingFallbackStrategy = false
 			br.logger.Info("recovered from fallback strategy, got planning for this hour",
-				slog.String("hour", hour.String()),
+				slog.String("startAt", startAt.String()),
 				slog.String("strategy", planning.Strategy))
 		}
 	}

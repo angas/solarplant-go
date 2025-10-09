@@ -262,7 +262,7 @@ func (fa *Ferroamp) SetBatteryAuto() error {
 	return fa.sendControlRequest(transId, payload)
 }
 
-/** Positive values (kW) equals discharge, negative charge */
+// Positive values (kW) equals discharge, negative charge
 func (fa *Ferroamp) SetBatteryLoad(power float64) error {
 	transId, payload := fa.formatPayload(power)
 	fa.logger.Info("sending new battery load to ferroamp", "power", power, "payload", payload)

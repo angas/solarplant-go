@@ -39,7 +39,7 @@ func StartServer(
 	currentVersion string) *Server {
 
 	logger := slog.Default().With("module", "www")
-	tm, err := NewTemplateManager(logger, cnfg.Api.WwwDir)
+	tm, err := NewTemplateManager(logger, cnfg.Api.WwwDir, cnfg.Location)
 	if err != nil {
 		logger.Error("template manager initialization error", slog.Any("error", err))
 	}
@@ -74,6 +74,7 @@ func StartServer(
 		logger.With(slog.String("handler", "timeseries")),
 		s.db,
 		s.tm,
+		cnfg.Location,
 	))
 
 	http.Handle("GET /log", NewLogHandler(logger.With(
@@ -84,7 +85,8 @@ func StartServer(
 
 	http.Handle("GET /chart", NewChartHandler(
 		logger.With(slog.String("handler", "chart")),
-		s.db))
+		s.db,
+		cnfg.Location))
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		name := r.Header.Get("User-Agent")

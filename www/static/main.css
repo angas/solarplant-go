@@ -25,12 +25,20 @@
   box-sizing: border-box;
 }
 
+html {
+  height: 100%;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
     Ubuntu, Cantarell, sans-serif;
   background-color: var(--bg-color);
   color: var(--text-color);
   line-height: 1.5;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 header {
@@ -42,9 +50,16 @@ header {
 }
 
 main {
+  flex: 1;
   display: flex;
   flex-direction: column;
   padding: 0 var(--padding) 50px var(--padding);
+  overflow: hidden;
+}
+
+#data {
+  flex: 1;
+  overflow-y: auto;
 }
 
 #menu-container {
@@ -110,13 +125,17 @@ main {
 
 table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: small;
 }
 
 th {
   background-color: var(--panel-bg);
   font-weight: bold;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 th,
@@ -124,18 +143,25 @@ td {
   border: 1px solid var(--border-color);
   padding: 5px;
   text-align: left;
+  vertical-align: middle;
+}
+
+td[rowspan] {
+  vertical-align: middle;
 }
 
 tbody > tr:hover {
   background-color: var(--panel-bg);
 }
 
-tr.pulse > td {
+tr.pulse > td,
+td.pulse {
   color: var(--highlight-color);
   animation: pulse 1.5s ease-in-out infinite;
 }
 
-tr.faded > td {
+tr.faded > td,
+td.faded {
   opacity: 0.5;
 }
 

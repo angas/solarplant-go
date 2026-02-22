@@ -94,7 +94,7 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 	battPwr := br.faData.BatteryPower()
 	battStatus := br.faData.BatteryStatuses()
 
-	startAt := timex.UTCHour()
+	startAt := timex.UTC15Min()
 	planning, err := br.db.GetPlanning(ctx, startAt)
 	if err != nil {
 		planning = database.PlanningRow{
@@ -103,7 +103,7 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 		}
 		if !br.usingFallbackStrategy {
 			br.usingFallbackStrategy = true
-			br.logger.Warn("failed to get planning for hour, using a fallback strategy",
+			br.logger.Warn("failed to get planning for slot, using a fallback strategy",
 				slog.String("startAt", startAt.String()),
 				slog.String("strategy", planning.Strategy),
 				slog.Any("error", err))
@@ -111,7 +111,7 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 	} else {
 		if br.usingFallbackStrategy {
 			br.usingFallbackStrategy = false
-			br.logger.Info("recovered from fallback strategy, got planning for this hour",
+			br.logger.Info("recovered from fallback strategy, got planning for this slot",
 				slog.String("startAt", startAt.String()),
 				slog.String("strategy", planning.Strategy))
 		}

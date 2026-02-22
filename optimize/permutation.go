@@ -5,7 +5,7 @@ import "math"
 // Generates all possible permutations (cartesian product) of strategies
 // for a given number of hours.
 func permute(hours int) [][]Strategy {
-	if hours < 1 || hours > 24 {
+	if hours < 1 {
 		return [][]Strategy{{}}
 	}
 

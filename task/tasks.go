@@ -39,7 +39,7 @@ func NewTasks(
 		WeatherForecastTask: NewWeatherForecastTask(logger.With(slog.String("task", "weather_forecast")), db, cnfg.WeatherForecast),
 		EnergyForecastTask:  NewEnergyForecastTask(logger.With(slog.String("task", "energy_forecast")), db, cnfg.EnergyForecast),
 		EnergyPriceTask:     NewEnergyPriceTask(logger.With(slog.String("task", "energy_price")), db, energyPriceProviders),
-		TimeSeriesTask:      NewHourlyTask(logger.With(slog.String("task", "time_series")), db, cnfg.EnergyPrice, faInMem, recentHours),
+		TimeSeriesTask:      NewTimeSeriesTask(logger.With(slog.String("task", "time_series")), db, cnfg.EnergyPrice, faInMem, recentHours),
 		PlanningTask:        NewPlanningTask(logger.With(slog.String("task", "planning")), db, cnfg, faInMem),
 		MaintenanceTask:     NewMaintenanceTask(logger.With(slog.String("task", "maintenance")), db, cnfg),
 	}
@@ -58,7 +58,7 @@ func (t *Tasks) Run() {
 	if err != nil {
 		panic(fmt.Sprintf("failed to schedule energy price task: %v", err))
 	}
-	_, err = t.cron.AddFunc("@hourly", t.TimeSeriesTask)
+	_, err = t.cron.AddFunc("*/15 * * * *", t.TimeSeriesTask)
 	if err != nil {
 		panic(fmt.Sprintf("failed to schedule time series task: %v", err))
 	}

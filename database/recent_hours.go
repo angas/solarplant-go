@@ -36,7 +36,7 @@ func (h *RecentHours) Get(hour timex.BucketTime) RecentHour {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	res, ok := h.hours[hour.TruncToHour()]
+	res, ok := h.hours[hour.TruncTo15Min()]
 	if !ok {
 		return RecentHour{}
 	}
@@ -47,7 +47,7 @@ func (h *RecentHours) Reload(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	from := timex.UTCHour().SubHours(24)
+	from := timex.UTC15Min().SubHours(24)
 	h.hours = make(map[timex.BucketTime]RecentHour)
 
 	tsRows, err := h.db.GetTimeSeriesFrom(ctx, from)
@@ -56,8 +56,8 @@ func (h *RecentHours) Reload(ctx context.Context) error {
 	}
 
 	for _, ts := range tsRows {
-		hour := ts.Timestamp.TruncToHour()
-		h.hours[hour] = RecentHour{Hour: hour, Ts: ts}
+		slot := ts.Timestamp.TruncTo15Min()
+		h.hours[slot] = RecentHour{Hour: slot, Ts: ts}
 	}
 
 	faRows, err := h.db.GetFaSnapshotFrom(ctx, from)
@@ -66,13 +66,13 @@ func (h *RecentHours) Reload(ctx context.Context) error {
 	}
 
 	for _, fa := range faRows {
-		hour := fa.Timestamp.TruncToHour()
-		entry, exists := h.hours[hour]
+		slot := fa.Timestamp.TruncTo15Min()
+		entry, exists := h.hours[slot]
 		if !exists {
-			entry = RecentHour{Hour: hour}
+			entry = RecentHour{Hour: slot}
 		}
 		entry.Fa = fa
-		h.hours[hour] = entry
+		h.hours[slot] = entry
 	}
 
 	return nil

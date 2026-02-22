@@ -35,7 +35,7 @@ energy_price:
 planner:
   hours_ahead: 12 # How many hours ahead to plan for charging/discharging the battery
   grid_max_power: 25 # Maximum power in kW that can be drawn from or pushed to the grid
-  run_at: "59 */1 * * *"
+  run_at: "14,29,44,59 * * * *"
 
 battery_spec:
   capacity: 10 # Battery maximum capacity in kWh

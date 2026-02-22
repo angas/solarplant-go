@@ -117,7 +117,7 @@ func (d *Database) GetDetailedPlanningFrom(ctx context.Context, startAt timex.Bu
 	    wf.precipitation
 		FROM planning pl
 		LEFT OUTER JOIN energy_price ep ON ep.start_at = pl.start_at
-		LEFT OUTER JOIN energy_forecast ef ON SUBSTR(ef.start_at, 1, 13) = SUBSTR(pl.start_at, 1, 13)
+		LEFT OUTER JOIN energy_forecast ef ON ef.start_at = pl.start_at
 		LEFT OUTER JOIN weather_forecast wf ON SUBSTR(wf.start_at, 1, 13) = SUBSTR(pl.start_at, 1, 13)
 		WHERE (pl.start_at >= ?)
 		ORDER BY pl.start_at ASC;`,

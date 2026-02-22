@@ -31,7 +31,7 @@ func NewChartHandler(logger *slog.Logger, db *database.Database, loc *time.Locat
 			return database.TimeSeriesRow{}
 		}
 
-		energyPrice, err := db.GetHourlyAvgEnergyPriceFrom(r.Context(), midnight)
+		energyPrice, err := db.GetEnergyPriceFrom(r.Context(), midnight)
 		if err != nil {
 			logger.Error("handling chart request", slog.Any("error", err))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -48,13 +48,14 @@ func NewChartHandler(logger *slog.Logger, db *database.Database, loc *time.Locat
 
 		// Chart 1: Battery Level and Energy Price
 		chart1 := chartjs.NewChart("")
-		for i := range chartjs.NoOfHours {
-			if ts := findTs(midnight.AddHours(int64(i))); ts.Timestamp.Empty() {
+		for i := range chartjs.NoOfSlots {
+			slot := midnight.Add15Min(int64(i))
+			if ts := findTs(slot); ts.Timestamp.Empty() {
 				chart1.Data.Datasets[0].Data[i] = nil
 			} else {
 				chart1.Data.Datasets[0].Data[i] = chartjs.FixedFloat64(ts.BatteryLevel, 2)
 			}
-			if ep := findEp(midnight.AddHours(int64(i))); ep.StartAt.Empty() {
+			if ep := findEp(slot); ep.StartAt.Empty() {
 				chart1.Data.Datasets[1].Data[i] = nil
 			} else {
 				chart1.Data.Datasets[1].Data[i] = chartjs.FixedFloat64(ep.Price, 2)
@@ -69,8 +70,9 @@ func NewChartHandler(logger *slog.Logger, db *database.Database, loc *time.Locat
 		// Chart 2: Energy Production and Consumption
 		chart2 := chartjs.NewChart("")
 		maxVal := 0.0
-		for i := range chartjs.NoOfHours {
-			if ts := findTs(midnight.AddHours(int64(i))); ts.Timestamp.Empty() {
+		for i := range chartjs.NoOfSlots {
+			slot := midnight.Add15Min(int64(i))
+			if ts := findTs(slot); ts.Timestamp.Empty() {
 				chart2.Data.Datasets[0].Data[i] = nil
 				chart2.Data.Datasets[1].Data[i] = nil
 			} else {

@@ -1,11 +1,11 @@
 <table hx-get="/timeseries" hx-trigger="load delay:1m" hx-swap="outerHTML">
   <thead>
     <tr>
-      <th>Hour</th>
+      <th>Time</th>
       <th title="Cloud cover between 0-8">Cloud (octas)</th>
-      <th title="Temperature forecast">Temp (°C)</th>
-      <th title="Average Energy Price in SEK including VATs and Grid Benefit">
-        Avg Price (SEK/kWh)
+      <th title="Temperature forecast">Temp (&deg;C)</th>
+      <th title="Energy Price in SEK including VATs and Grid Benefit">
+        Price (SEK/kWh)
       </th>
       <th title="Battery Level">Batt Lvl (%)</th>
       <th>Batt Net Load (kWh)</th>
@@ -21,32 +21,25 @@
   </thead>
   <tbody>
     {{ range . }}
-    <tr
-      {{if
-      eq
-      .ComparedToThisHour
-      0}}class="pulse"
-      {{else
-      if
-      gt
-      .ComparedToThisHour
-      0}}class="faded"
-      {{end}}
-    >
-      <td style="white-space: nowrap">{{ LocalDateHour .Timestamp }}</td>
-      <td>{{ MaybeUint8 .CloudCover }}</td>
-      <td>{{ MaybeFloat64 .Temperature 1 }}</td>
-      <td>{{ MaybeFloat64 .EnergyPriceAvg 4 }}</td>
-      <td>{{ MaybeFloat64 .BatteryLevel 2 }}</td>
-      <td>{{ MaybeFloat64 .BatteryNetLoad 2 }}</td>
-      <td>{{ MaybeFloat64 .Production 2 }}</td>
-      <td>{{ MaybeFloat64 .ProductionEstimated 2 }}</td>
-      <td>{{ MaybeFloat64 .Consumption 2 }}</td>
-      <td>{{ MaybeFloat64 .ConsumptionEstimated 2 }}</td>
-      <td>{{ MaybeFloat64 .GridImport 2 }}</td>
-      <td>{{ MaybeFloat64 .GridExport 2 }}</td>
-      <td>{{ MaybeFloat64 .CashFlow 2 }}</td>
-      <td>{{ MaybeString .Strategy }}</td>
+    {{ $sc := "" }}{{ if eq .ComparedToThisSlot 0 }}{{ $sc = "pulse" }}{{ else if gt .ComparedToThisSlot 0 }}{{ $sc = "faded" }}{{ end }}
+    {{ $hc := "" }}{{ if eq .ComparedToThisHour 0 }}{{ $hc = "pulse" }}{{ else if gt .ComparedToThisHour 0 }}{{ $hc = "faded" }}{{ end }}
+    <tr{{ if eq .ComparedToThisSlot 0 }} id="current-slot"{{ end }}>
+      <td style="white-space: nowrap" class="{{ $sc }}">{{ LocalDateTime .Timestamp }}</td>
+      {{ if gt .HourRowSpan 0 }}
+      <td rowspan="{{ .HourRowSpan }}" class="{{ $hc }}">{{ MaybeUint8 .CloudCover }}</td>
+      <td rowspan="{{ .HourRowSpan }}" class="{{ $hc }}">{{ MaybeFloat64 .Temperature 1 }}</td>
+      {{ end }}
+      <td class="{{ $sc }}">{{ MaybeFloat64 .EnergyPrice 4 }}</td>
+      <td class="{{ $sc }}">{{ MaybeFloat64 .BatteryLevel 2 }}</td>
+      <td class="{{ $sc }}">{{ MaybeFloat64 .BatteryNetLoad 2 }}</td>
+      <td class="{{ $sc }}">{{ MaybeFloat64 .Production 2 }}</td>
+      <td class="{{ $sc }}">{{ MaybeFloat64 .ProductionEstimated 2 }}</td>
+      <td class="{{ $sc }}">{{ MaybeFloat64 .Consumption 2 }}</td>
+      <td class="{{ $sc }}">{{ MaybeFloat64 .ConsumptionEstimated 2 }}</td>
+      <td class="{{ $sc }}">{{ MaybeFloat64 .GridImport 2 }}</td>
+      <td class="{{ $sc }}">{{ MaybeFloat64 .GridExport 2 }}</td>
+      <td class="{{ $sc }}">{{ MaybeFloat64 .CashFlow 2 }}</td>
+      <td class="{{ $sc }}">{{ MaybeString .Strategy }}</td>
     </tr>
     {{ end }}
   </tbody>

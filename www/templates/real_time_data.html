@@ -17,7 +17,7 @@
       <td style="text-align: right">{{ MaybeFloat64 .GridPower 2 }} kW</td>
     </tr>
     <tr>
-      <td>Grid Imp/Exp (this hour)</td>
+      <td>Grid Imp/Exp (this slot)</td>
       <td style="text-align: right">{{ MaybeFloat64 .GridImportThisHour 2 }} / {{ MaybeFloat64 .GridExportThisHour 2 }}
         kWh
       </td>
@@ -27,7 +27,7 @@
       <td style="text-align: right">{{ MaybeFloat64 .EnergyPrice 4 }} SEK</td>
     </tr>
     <tr>
-      <td>Cash Flow (this hour)</td>
+      <td>Cash Flow (this slot)</td>
       <td style="text-align: right">{{ MaybeFloat64 .CashFlowThisHour 2 }} SEK</td>
     </tr>
   </table>

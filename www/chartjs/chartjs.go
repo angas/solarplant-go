@@ -5,15 +5,14 @@ import (
 	"math"
 )
 
-const NoOfHours = 24
+const NoOfSlots = 96
 const ColorYellow = "#ffc107d4"
 const ColorRed = "#f44336d4"
 
 func NewChart(title string) Chart {
-	labels := make([]string, NoOfHours)
-	for i := 0; i < NoOfHours; i++ {
-		label := fmt.Sprintf("%02d:00", i)
-		labels[i] = label
+	labels := make([]string, NoOfSlots)
+	for i := range NoOfSlots {
+		labels[i] = fmt.Sprintf("%02d:%02d", i/4, (i%4)*15)
 	}
 
 	chart := Chart{
@@ -22,16 +21,18 @@ func NewChart(title string) Chart {
 			Labels: labels,
 			Datasets: []ChartDataset{
 				{
-					Data:        make([]*float64, NoOfHours),
+					Data:        make([]*float64, NoOfSlots),
 					BorderWidth: 1,
+					PointRadius: 1,
 					Tension:     0.4,
 					Fill:        true,
 					BorderColor: ColorYellow,
 					YAxisID:     "YAxis1",
 				},
 				{
-					Data:        make([]*float64, NoOfHours),
+					Data:        make([]*float64, NoOfSlots),
 					BorderWidth: 1,
+					PointRadius: 1,
 					Tension:     0.4,
 					Fill:        true,
 					BorderColor: ColorRed,

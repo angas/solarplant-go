@@ -21,6 +21,7 @@ docker run -d \
   -p 8080:8080 \
   -v "$(pwd)/data/:/app/data/" \
   -v "$(pwd)/config/:/app/config/" \
+  -e TZ=Europe/Stockholm \
   --restart always \
   ghcr.io/angas/solarplant-go:latest
 ```
@@ -37,6 +38,8 @@ services:
       - ./data/:/app/data/
       - ./config/:/app/config/      
     restart: always
+    environment:
+      TZ: Europe/Stockholm
 ```
 
 ### Build from source

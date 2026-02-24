@@ -38,6 +38,12 @@ func UTCHour() BucketTime {
 	return BucketTime(time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, time.UTC))
 }
 
+func UTC15Min() BucketTime {
+	now := time.Now().UTC()
+	minute := now.Minute() / 15 * 15
+	return BucketTime(time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), minute, 0, 0, time.UTC))
+}
+
 func UTCMidnight() BucketTime {
 	now := time.Now().UTC()
 	return BucketTime(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC))
@@ -59,6 +65,13 @@ func (bt BucketTime) TruncToHour() BucketTime {
 	return BucketTime(time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, time.UTC))
 }
 
+// Returns a BucketTime truncated to the start of the current 15-minute boundary in UTC.
+func (bt BucketTime) TruncTo15Min() BucketTime {
+	t := bt.Time()
+	minute := t.Minute() / 15 * 15
+	return BucketTime(time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), minute, 0, 0, time.UTC))
+}
+
 // Returns a BucketTime truncated to the start of the day in UTC.
 func (bt BucketTime) TruncToMidnight() BucketTime {
 	t := bt.Time()
@@ -76,6 +89,10 @@ func (bt BucketTime) Add(d time.Duration) BucketTime {
 
 func (bt BucketTime) AddHours(h int64) BucketTime {
 	return bt.Add(time.Duration(h) * time.Hour)
+}
+
+func (bt BucketTime) Add15Min(n int64) BucketTime {
+	return bt.Add(time.Duration(n) * 15 * time.Minute)
 }
 
 func (bt BucketTime) SubHours(h int64) BucketTime {

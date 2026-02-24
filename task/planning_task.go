@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -34,47 +35,52 @@ func NewPlanningTask(logger *slog.Logger, db *database.Database, cnfg *config.Ap
 			},
 			EnergyTax:    cnfg.EnergyPrice.Tax,
 			GridMaxPower: cnfg.Planner.GridMaxPower,
+			SlotDuration: 15 * time.Minute,
 			Forecast:     []optimize.Forecast{},
 		}
 
-		hour := timex.UTCHour()
-		continueTo := hour.AddHours(int64(cnfg.Planner.HoursAhead))
+		slot := timex.UTC15Min()
+		totalSlots := cnfg.Planner.HoursAhead * 4
+		continueTo := slot.Add15Min(int64(totalSlots))
 		timeBuckets := []timex.BucketTime{}
 
-		for hour.Before(continueTo) {
-			hour = hour.AddHours(1)
-			timeBuckets = append(timeBuckets, hour)
+		for slot.Before(continueTo) {
+			slot = slot.Add15Min(1)
 
-			// Get average energy price for the next hour.
-			// For now this is enough, in the furure we will break yhis down into 15 minute intervals
-			ep, err := db.GetAvgEnergyPriceForHour(ctx, hour)
+			ep, err := db.GetEnergyPrice(ctx, slot)
 			if err != nil {
-				if err == sql.ErrNoRows {
-					logger.WarnContext(ctx, "can't plan upcoming hours, no energy price found", slog.String("startAt", hour.String()))
+				if errors.Is(err, sql.ErrNoRows) {
+					logger.WarnContext(ctx, "no energy price found, planning with available data", slog.String("startAt", slot.String()))
 				} else {
-					logger.ErrorContext(ctx, "planning task error, getting energy price", slog.String("startAt", hour.String()), slog.Any("error", err))
+					logger.ErrorContext(ctx, "planning task error, getting energy price", slog.String("startAt", slot.String()), slog.Any("error", err))
 				}
-				return
+				break
 			}
 
-			ef, err := db.GetEnergyForecast(ctx, hour)
+			ef, err := db.GetEnergyForecast(ctx, slot)
 			if err != nil {
-				if err == sql.ErrNoRows {
-					logger.WarnContext(ctx, "can't plan upcoming hours, no energy forecast found", slog.String("startAt", hour.String()))
+				if errors.Is(err, sql.ErrNoRows) {
+					logger.WarnContext(ctx, "no energy forecast found, planning with available data", slog.String("startAt", slot.String()))
 				} else {
-					logger.ErrorContext(ctx, "planning task error, getting energy forecast", slog.String("startAt", hour.String()), slog.Any("error", err))
+					logger.ErrorContext(ctx, "planning task error, getting energy forecast", slog.String("startAt", slot.String()), slog.Any("error", err))
 				}
-				return
+				break
 			}
 
+			timeBuckets = append(timeBuckets, slot)
 			optInput.Forecast = append(optInput.Forecast, optimize.Forecast{
 				EnergyPrice:   ep.Price,
 				EnergyBalance: calc.TwoDecimals(ef.Production - ef.Consumption),
 			})
 		}
 
+		if len(timeBuckets) == 0 {
+			logger.WarnContext(ctx, "no slots with complete data, skipping planning")
+			return
+		}
+
 		logger.DebugContext(ctx, fmt.Sprintf("planning for %d time buckets ahead", len(timeBuckets)),
-			slog.String("startAt", hour.String()),
+			slog.String("startAt", slot.String()),
 			slog.Int("noOfTimeBuckets", len(timeBuckets)),
 			slog.Float64("battLvl", optInput.Battery.CurrentLevel))
 
@@ -106,7 +112,7 @@ func NewPlanningTask(logger *slog.Logger, db *database.Database, cnfg *config.Ap
 		}
 
 		logger.InfoContext(ctx, "planning task done",
-			slog.Int("noOfHoursUpdated", cnfg.Planner.HoursAhead),
+			slog.Int("noOfSlotsUpdated", len(timeBuckets)),
 			slog.Float64("cost", optOutput.Cost),
 			slog.Float64("battLvl", optOutput.BatteryLevel))
 	}

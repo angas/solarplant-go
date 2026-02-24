@@ -208,7 +208,7 @@ func (d *Database) scanTimeSeriesHours(rows *sql.Rows) ([]TimeSeriesRow, error) 
 			return nil, err
 		}
 
-		t.Timestamp, err = timex.ParseBucketTime(tsStr, timex.BucketSizeHour)
+		t.Timestamp, err = timex.ParseBucketTime(tsStr, timex.BucketSize15Minutes)
 		if err != nil {
 			d.logger.Warn("parsing timestamp", slog.String("timestamp", tsStr), slog.String("error", err.Error()))
 			continue
@@ -222,6 +222,121 @@ func (d *Database) scanTimeSeriesHours(rows *sql.Rows) ([]TimeSeriesRow, error) 
 	}
 
 	return tsr, nil
+}
+
+// GetHourlySummaryForHour returns historical hourly totals for a given hour-of-day,
+// aggregating any 15-min rows within each hour into a single row per date.
+// This correctly handles both old hourly rows and new 15-min rows during transition.
+func (d *Database) GetHourlySummaryForHour(ctx context.Context, hour timex.BucketTime) ([]TimeSeriesRow, error) {
+	rows, err := d.read.QueryContext(ctx, `
+		SELECT
+			STRFTIME('%Y-%m-%dT%H:00:00Z', timestamp) AS hour_ts,
+			AVG(cloud_cover),
+			AVG(temperature),
+			AVG(precipitation),
+			AVG(energy_price_avg),
+			SUM(production),
+			SUM(production_estimated),
+			MAX(production_lifetime),
+			SUM(consumption),
+			SUM(consumption_estimated),
+			SUM(grid_import),
+			SUM(grid_export),
+			MAX(battery_level),
+			SUM(battery_net_load),
+			SUM(cash_flow),
+			MAX(strategy)
+		FROM time_series
+		WHERE timestamp >= ? AND STRFTIME('%H', timestamp) = ?
+		GROUP BY hour_ts
+		ORDER BY hour_ts ASC`,
+		hour.String(), fmt.Sprintf("%02d", hour.Time().Hour()))
+	if err != nil {
+		return nil, fmt.Errorf("fetching hourly summary for hour %s: %w", hour.String(), err)
+	}
+	defer rows.Close()
+
+	var tsr []TimeSeriesRow
+	for rows.Next() {
+		var t TimeSeriesRow
+		var tsStr string
+		err := rows.Scan(
+			&tsStr,
+			&t.CloudCover,
+			&t.Temperature,
+			&t.Precipitation,
+			&t.EnergyPriceAvg,
+			&t.Production,
+			&t.ProductionEstimated,
+			&t.ProductionLifetime,
+			&t.Consumption,
+			&t.ConsumptionEstimated,
+			&t.GridImport,
+			&t.GridExport,
+			&t.BatteryLevel,
+			&t.BatteryNetLoad,
+			&t.CashFlow,
+			&t.Strategy)
+		if err != nil {
+			return nil, err
+		}
+
+		t.Timestamp, err = timex.ParseBucketTime(tsStr, timex.BucketSizeHour)
+		if err != nil {
+			d.logger.Warn("parsing hourly summary timestamp", slog.String("timestamp", tsStr), slog.String("error", err.Error()))
+			continue
+		}
+
+		tsr = append(tsr, t)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scanning hourly summary rows: %w", err)
+	}
+
+	return tsr, nil
+}
+
+// Get15MinSummaryForSlot returns historical time series rows for a specific 15-minute
+// slot (matching both hour and minute). Each matching row is a single 15-min entry
+// from a different historical date. The slot parameter determines the lookback start
+// and the hour:minute to match.
+func (d *Database) Get15MinSummaryForSlot(ctx context.Context, slot timex.BucketTime) ([]TimeSeriesRow, error) {
+	rows, err := d.read.QueryContext(ctx, `
+		SELECT
+			timestamp,
+			cloud_cover,
+			temperature,
+			precipitation,
+			energy_price_avg,
+			production,
+			production_estimated,
+			production_lifetime,
+			consumption,
+			consumption_estimated,
+			grid_import,
+			grid_export,
+			battery_level,
+			battery_net_load,
+			cash_flow,
+			strategy
+		FROM time_series
+		WHERE timestamp >= ? AND STRFTIME('%H', timestamp) = ? AND STRFTIME('%M', timestamp) = ?
+		ORDER BY timestamp ASC`,
+		slot.String(),
+		fmt.Sprintf("%02d", slot.Time().Hour()),
+		fmt.Sprintf("%02d", slot.Time().Minute()))
+	if err != nil {
+		return nil, fmt.Errorf("fetching 15-min summary for slot %s: %w", slot.String(), err)
+	}
+	defer rows.Close()
+
+	ts, err := d.scanTimeSeriesHours(rows)
+	if err != nil {
+		return ts, fmt.Errorf("scanning 15-min summary row: %w", err)
+	}
+
+	return ts, nil
 }
 
 func (d *Database) GetDailyStats(ctx context.Context, noOfDays int) ([]DailyStats, error) {

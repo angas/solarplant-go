@@ -29,6 +29,13 @@ func (b Battery) RemainingCapacity() float64 {
 	return b.ToKWh(b.CurrentLevel) - b.ToKWh(b.MinLevel)
 }
 
+// Calculates and updates battery level for a given load over a time duration, returns diff in kWh.
+// loadKW is the power in kW, slotHours is the duration of the time slot in hours (e.g. 0.25 for 15 min).
+func (b *Battery) UpdateLevelForDuration(loadKW float64, slotHours float64) float64 {
+	loadKWh := loadKW * slotHours
+	return b.UpdateLevel(loadKWh)
+}
+
 // Calculates and updates battery level for a given balance, returns diff in kWh
 func (b *Battery) UpdateLevel(load float64 /* Charge or discharge load in kW */) float64 {
 	var newLvlKWh float64

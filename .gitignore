@@ -3,3 +3,5 @@
 bin/
 data/
 deploy.sh
+CLAUDE.md
+.claude/

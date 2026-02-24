@@ -33,6 +33,15 @@
     function openMenu() {
       document.getElementById('menu-dropdown').classList.add('visible');
     }
+    document.addEventListener('DOMContentLoaded', () => {
+      let initialScroll = true;
+      document.getElementById('data').addEventListener('htmx:afterSettle', () => {
+        if (initialScroll) {
+          document.getElementById('current-slot')?.scrollIntoView({ block: 'center' });
+          initialScroll = false;
+        }
+      });
+    });
     // Click outside menu handler
     document.addEventListener('click', (event) => {
       const menuContainer = document.getElementById('menu-container');

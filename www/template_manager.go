@@ -53,6 +53,12 @@ func funcMap(loc *time.Location) template.FuncMap {
 			}
 			return bt.Time().In(loc).Format("2006-01-02 15")
 		},
+		"LocalDateTime": func(bt timex.BucketTime) string {
+			if bt.Empty() {
+				return "-"
+			}
+			return bt.Time().In(loc).Format("2006-01-02 15:04")
+		},
 	}
 }
 
@@ -134,7 +140,7 @@ func (tm *TemplateManager) loadExternalTemplates(extDir string) error {
 	return nil
 }
 
-func (tm *TemplateManager) Execute(name string, data interface{}) (bytes.Buffer, error) {
+func (tm *TemplateManager) Execute(name string, data any) (bytes.Buffer, error) {
 	var buf bytes.Buffer
 
 	tm.mu.RLock()

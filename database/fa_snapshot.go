@@ -11,7 +11,7 @@ import (
 	"github.com/angas/solarplant-go/timex"
 )
 
-const faSnapshotBucketSize = timex.BucketSizeHour
+const faSnapshotBucketSize = timex.BucketSize15Minutes
 
 type FaSnapshotRow struct {
 	Timestamp timex.BucketTime

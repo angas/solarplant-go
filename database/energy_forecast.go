@@ -10,7 +10,7 @@ import (
 	"github.com/angas/solarplant-go/timex"
 )
 
-const energyForecastBucketSize = timex.BucketSizeHour
+const energyForecastBucketSize = timex.BucketSize15Minutes
 
 type EnergyForecastRow struct {
 	StartAt timex.BucketTime

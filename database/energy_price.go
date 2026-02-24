@@ -36,6 +36,11 @@ func (d *Database) SaveEnergyPrices(ctx context.Context, rows []EnergyPriceRow) 
 	return nil
 }
 
+func (d *Database) GetEnergyPrice(ctx context.Context, startAt timex.BucketTime) (EnergyPriceRow, error) {
+	row := d.read.QueryRowContext(ctx, "SELECT start_at, price FROM energy_price WHERE start_at = ?", startAt.String())
+	return d.scanEnergyPriceRow(ctx, row.Scan)
+}
+
 func (d *Database) GetEnergyPriceForHour(ctx context.Context, hour timex.BucketTime) (EnergyPriceRow, error) {
 	row := d.read.QueryRowContext(ctx, "SELECT start_at, price FROM energy_price WHERE start_at = ?", hour.TruncToHour().String())
 	return d.scanEnergyPriceRow(ctx, row.Scan)
@@ -87,12 +92,15 @@ func (d *Database) scanEnergyPriceRow(ctx context.Context, scan func(dest ...any
 	var startAtStr sql.NullString
 	var price sql.NullFloat64
 	err := scan(&startAtStr, &price)
+	if err == sql.ErrNoRows {
+		return EnergyPriceRow{}, sql.ErrNoRows
+	}
 	if err != nil {
 		return EnergyPriceRow{}, fmt.Errorf("scanning energy price row: %w", err)
 	}
 
 	if !startAtStr.Valid {
-		return EnergyPriceRow{}, sql.ErrNoRows // or a custom error
+		return EnergyPriceRow{}, sql.ErrNoRows
 	}
 
 	startAt, err := timex.ParseBucketTime(startAtStr.String, energyPriceBucketSize)

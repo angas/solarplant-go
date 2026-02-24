@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"time"
 
 	_ "embed"
 
@@ -17,7 +18,7 @@ type timeSeriesTemplRow struct {
 	CloudCover           maybe.Maybe[uint8]
 	Temperature          maybe.Maybe[float64]
 	Precipitation        maybe.Maybe[float64]
-	EnergyPriceAvg       maybe.Maybe[float64]
+	EnergyPrice          maybe.Maybe[float64]
 	Production           maybe.Maybe[float64]
 	ProductionEstimated  maybe.Maybe[float64]
 	Consumption          maybe.Maybe[float64]
@@ -28,54 +29,57 @@ type timeSeriesTemplRow struct {
 	GridImport           maybe.Maybe[float64]
 	CashFlow             maybe.Maybe[float64]
 	Strategy             maybe.Maybe[string]
-	ComparedToThisHour   int
+	ComparedToThisSlot int
+	ComparedToThisHour int
+	HourRowSpan        int // >0 on the first row of each hour group (rendered with rowspan); 0 on subsequent rows
 }
 
 func NewTimeSeriesHandler(logger *slog.Logger, db *database.Database, tm *TemplateManager, recentHours *database.RecentHours) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 
-		var hour timex.BucketTime
-		thisHour := timex.UTCHour()
-		if thisHour.Time().Hour() < 12 {
-			hour = thisHour.SubHours(12)
+		thisSlot := timex.UTC15Min()
+		var startSlot timex.BucketTime
+		if thisSlot.Time().Hour() < 12 {
+			startSlot = thisSlot.SubHours(12)
 		} else {
-			hour = timex.UTCMidnight()
+			startSlot = timex.UTCMidnight()
 		}
 
 		var rows []timeSeriesTemplRow
+		slot := startSlot
 
-		for {
-			recentHour := recentHours.Get(hour)
-			if recentHour.Empty() {
-				break
+		// Historical rows: iterate by 15-min slot, tolerating gaps (e.g. old hourly data)
+		endSlot := timex.UTC15Min()
+		for !slot.After(endSlot) {
+			recentSlot := recentHours.Get(slot)
+			if !recentSlot.Empty() {
+				row := timeSeriesTemplRow{
+					Timestamp:            slot,
+					CloudCover:           maybe.Some(recentSlot.Ts.CloudCover),
+					Temperature:          maybe.Some(recentSlot.Ts.Temperature),
+					Precipitation:        maybe.Some(recentSlot.Ts.Precipitation),
+					EnergyPrice:          maybe.Some(recentSlot.Ts.EnergyPriceAvg),
+					Production:           maybe.Some(recentSlot.Ts.Production),
+					ProductionEstimated:  maybe.Some(recentSlot.Ts.ProductionEstimated),
+					Consumption:          maybe.Some(recentSlot.Ts.Consumption),
+					ConsumptionEstimated: maybe.Some(recentSlot.Ts.ConsumptionEstimated),
+					GridExport:           maybe.Some(recentSlot.Ts.GridExport),
+					GridImport:           maybe.Some(recentSlot.Ts.GridImport),
+					BatteryLevel:         maybe.Some(recentSlot.Ts.BatteryLevel),
+					BatteryNetLoad:       maybe.Some(recentSlot.Ts.BatteryNetLoad),
+					CashFlow:             maybe.Some(recentSlot.Ts.CashFlow),
+					Strategy:             maybe.Some(recentSlot.Ts.Strategy),
+					ComparedToThisSlot:   slot.Time().Compare(thisSlot.Time()),
+				}
+				rows = append(rows, row)
 			}
-
-			rows = append(rows, timeSeriesTemplRow{
-				Timestamp:            recentHour.Hour,
-				CloudCover:           maybe.Some(recentHour.Ts.CloudCover),
-				Temperature:          maybe.Some(recentHour.Ts.Temperature),
-				Precipitation:        maybe.Some(recentHour.Ts.Precipitation),
-				EnergyPriceAvg:       maybe.Some(recentHour.Ts.EnergyPriceAvg),
-				Production:           maybe.Some(recentHour.Ts.Production),
-				ProductionEstimated:  maybe.Some(recentHour.Ts.ProductionEstimated),
-				Consumption:          maybe.Some(recentHour.Ts.Consumption),
-				ConsumptionEstimated: maybe.Some(recentHour.Ts.ConsumptionEstimated),
-				GridExport:           maybe.Some(recentHour.Ts.GridExport),
-				GridImport:           maybe.Some(recentHour.Ts.GridImport),
-				BatteryLevel:         maybe.Some(recentHour.Ts.BatteryLevel),
-				BatteryNetLoad:       maybe.Some(recentHour.Ts.BatteryNetLoad),
-				CashFlow:             maybe.Some(recentHour.Ts.CashFlow),
-				Strategy:             maybe.Some(recentHour.Ts.Strategy),
-				ComparedToThisHour:   recentHour.Hour.Time().Compare(thisHour.Time()),
-			})
-
-			hour = hour.AddHours(1)
+			slot = slot.Add15Min(1)
 		}
 
-		// Append forecast data as long as it has been planned
+		// Append forecast data (already at 15-min granularity from planning)
 		if len(rows) > 0 {
-			from := rows[len(rows)-1].Timestamp.AddHours(1)
+			from := rows[len(rows)-1].Timestamp.Add(15 * time.Minute)
 
 			forecast, err := db.GetDetailedPlanningFrom(r.Context(), from)
 			if err != nil {
@@ -90,7 +94,7 @@ func NewTimeSeriesHandler(logger *slog.Logger, db *database.Database, tm *Templa
 					CloudCover:           maybe.SqlNull(uint8(f.CloudCover.Int16), f.CloudCover.Valid),
 					Temperature:          maybe.SqlNull(f.Temperature.Float64, f.Temperature.Valid),
 					Precipitation:        maybe.SqlNull(f.Precipitation.Float64, f.Precipitation.Valid),
-					EnergyPriceAvg:       maybe.SqlNull(f.EnergyPrice.Float64, f.EnergyPrice.Valid),
+					EnergyPrice:          maybe.SqlNull(f.EnergyPrice.Float64, f.EnergyPrice.Valid),
 					Production:           maybe.None[float64](),
 					ProductionEstimated:  maybe.SqlNull(f.ProductionEstimated.Float64, f.ProductionEstimated.Valid),
 					Consumption:          maybe.None[float64](),
@@ -101,16 +105,41 @@ func NewTimeSeriesHandler(logger *slog.Logger, db *database.Database, tm *Templa
 					BatteryNetLoad:       maybe.None[float64](),
 					CashFlow:             maybe.None[float64](),
 					Strategy:             maybe.Some(f.Strategy),
-					ComparedToThisHour:   f.StartAt.Time().Compare(thisHour.Time()),
+					ComparedToThisSlot:   f.StartAt.Time().Compare(thisSlot.Time()),
 				}
 
 				rows = append(rows, row)
 			}
 		}
 
+		// Sort descending (newest first)
 		slices.SortFunc(rows, func(i, j timeSeriesTemplRow) int {
 			return j.Timestamp.Time().Compare(i.Timestamp.Time())
 		})
+
+		// Group rows by hour and assign HourRowSpan on the first row of each group.
+		// ComparedToThisHour is set for merged (rowspan) cells; ComparedToThisSlot
+		// remains slot-level for per-row cells (Time, Price, Strategy).
+		thisHour := thisSlot.TruncToHour().Time()
+		for i := 0; i < len(rows); {
+			hourKey := rows[i].Timestamp.TruncToHour().String()
+			j := i + 1
+			for j < len(rows) && rows[j].Timestamp.TruncToHour().String() == hourKey {
+				j++
+			}
+			groupSize := j - i
+			rows[i].HourRowSpan = groupSize
+			groupHour := rows[i].Timestamp.TruncToHour().Time()
+			hourCmp := groupHour.Compare(thisHour)
+			for k := i; k < j; k++ {
+				rows[k].ComparedToThisHour = hourCmp
+			}
+			// For single-row groups (old hourly data), use hour-level for slot comparison too
+			if groupSize == 1 {
+				rows[i].ComparedToThisSlot = hourCmp
+			}
+			i = j
+		}
 
 		if err := tm.ExecuteToWriter("time_series.html", rows, &w); err != nil {
 			logger.Error("handling time_series request", slog.Any("error", err))

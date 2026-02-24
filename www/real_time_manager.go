@@ -48,9 +48,9 @@ func NewRealTimeManager(
 
 func (m *RealTimeManager) Get(ctx context.Context) (RealTimeData, error) {
 	rtd := RealTimeData{}
-	thisHour := timex.UTCHour()
+	thisSlot := timex.UTC15Min()
 
-	ep, ok := m.energyPrices[thisHour]
+	ep, ok := m.energyPrices[thisSlot]
 	if !ok {
 		eps, err := m.db.GetEnergyPriceFrom(ctx, timex.UTCMidnight())
 		if err != nil {
@@ -59,7 +59,7 @@ func (m *RealTimeManager) Get(ctx context.Context) (RealTimeData, error) {
 			m.energyPrices = make(map[timex.BucketTime]float64)
 			for _, ep := range eps {
 				m.energyPrices[ep.StartAt] = ep.Price
-				if ep.StartAt == thisHour {
+				if ep.StartAt == thisSlot {
 					rtd.EnergyPrice = maybe.Some(ep.Price)
 					break
 				}
@@ -69,7 +69,7 @@ func (m *RealTimeManager) Get(ctx context.Context) (RealTimeData, error) {
 		rtd.EnergyPrice = maybe.Some(ep)
 	}
 
-	recentHour := m.recentHours.Get(thisHour.SubHours(1))
+	recentHour := m.recentHours.Get(thisSlot.Add15Min(-1))
 	if ok {
 		imp := m.faInMem.ImportedSince(recentHour.Fa.Data)
 		exp := m.faInMem.ExportedSince(recentHour.Fa.Data)

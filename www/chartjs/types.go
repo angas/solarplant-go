@@ -14,6 +14,7 @@ type ChartData struct {
 type ChartDataset struct {
 	Data        []*float64 `json:"data,omitempty"`
 	BorderWidth int        `json:"borderWidth"`
+	PointRadius float64    `json:"pointRadius"`
 	Tension     float64    `json:"tension"`
 	Fill        bool       `json:"fill"`
 	BorderColor string     `json:"borderColor"`
@@ -46,7 +47,7 @@ type ChartScale struct {
 	Position string          `json:"position"`
 	Min      *float64        `json:"min,omitempty"`
 	Max      *float64        `json:"max,omitempty"`
-	Title    ChartScaleTitle `json:"title,omitempty"`
+	Title    ChartScaleTitle `json:"title"`
 }
 
 type ChartScaleTitle struct {

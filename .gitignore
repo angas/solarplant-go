@@ -1,7 +1,8 @@
-*.tar
-.env
 bin/
 data/
+.claude/
+.zed/
+*.tar
+.env
 deploy.sh
 CLAUDE.md
-.claude/

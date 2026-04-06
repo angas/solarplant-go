@@ -41,8 +41,8 @@ battery_spec:
   capacity: 10 # Battery maximum capacity in kWh
   min_level: 10 # Battery minimum level in percentage
   max_level: 100 # Battery maximum level in percentage
-  max_charge_rate: 3.5 # Battery maximum charge power in kW
-  max_discharge_rate: 3 # Battery maximum discharge power in kW
+  max_charge_rate: 4 # Battery maximum charge power in kW
+  max_discharge_rate: 3.5 # Battery maximum discharge power in kW
   degradation_cost: 0.35 # Cost of charging/discharging the battery in SEK/kWh
 
 battery_regulator_strategy:

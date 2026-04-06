@@ -27,27 +27,27 @@ type WeatherForecast struct {
 	Precipitation float64
 }
 
+// smhi represents the SNOW1gv1 API response format.
+// https://opendata.smhi.se/metfcst/snow1gv1/introduction
 type smhi struct {
-	ApprovedTime  time.Time   `json:"approvedTime"`
+	CreatedTime   time.Time   `json:"createdTime"`
 	ReferenceTime time.Time   `json:"referenceTime"`
 	Geometry      geometry    `json:"geometry"`
 	TimeSeries    []timeEntry `json:"timeSeries"`
 }
 
 type geometry struct {
-	Type        string      `json:"type"`
-	Coordinates [][]float64 `json:"coordinates"`
+	Type        string    `json:"type"`
+	Coordinates []float64 `json:"coordinates"`
 }
 
 type timeEntry struct {
-	ValidTime  time.Time   `json:"validTime"`
-	Parameters []parameter `json:"parameters"`
+	Time time.Time     `json:"time"`
+	Data timeEntryData `json:"data"`
 }
 
-type parameter struct {
-	Name      string    `json:"name"`
-	LevelType string    `json:"levelType"`
-	Level     int       `json:"level"`
-	Unit      string    `json:"unit"`
-	Values    []float64 `json:"values"`
+type timeEntryData struct {
+	AirTemperature          float64 `json:"air_temperature"`
+	CloudAreaFraction       float64 `json:"cloud_area_fraction"`
+	PrecipitationAmountMean float64 `json:"precipitation_amount_mean"`
 }

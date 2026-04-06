@@ -11,7 +11,7 @@ import (
 
 func Get(ctx context.Context, lon float64, lat float64) ([]WeatherForecast, error) {
 	url := fmt.Sprintf(
-		"%s/api/category/pmp3g/version/2/geotype/point/lon/%0.4f/lat/%0.4f/data.json",
+		"%s/api/category/snow1g/version/1/geotype/point/lon/%0.4f/lat/%0.4f/data.json",
 		BASE_URL, lon, lat)
 
 	slog.Default().Info("fetching forecast from SMHI...", "url", url)
@@ -38,25 +38,15 @@ func Get(ctx context.Context, lon float64, lat float64) ([]WeatherForecast, erro
 		return nil, fmt.Errorf("error unmarshaling SMHI json: %v", err)
 	}
 
-	result := make([]WeatherForecast, 0)
+	result := make([]WeatherForecast, 0, len(smhi.TimeSeries))
 	for _, entry := range smhi.TimeSeries {
 		result = append(result, WeatherForecast{
-			Hour:          entry.ValidTime,
-			CloudCover:    uint8(getParameter(entry.Parameters, "tcc_mean")),
-			Temperature:   getParameter(entry.Parameters, "t"),
-			Precipitation: getParameter(entry.Parameters, "pmean"),
+			Hour:          entry.Time,
+			CloudCover:    uint8(entry.Data.CloudAreaFraction),
+			Temperature:   entry.Data.AirTemperature,
+			Precipitation: entry.Data.PrecipitationAmountMean,
 		})
 	}
 
 	return result, nil
-}
-
-func getParameter(params []parameter, name string) float64 {
-	for _, param := range params {
-		if param.Name == name {
-			return param.Values[0]
-		}
-	}
-
-	return 0
 }

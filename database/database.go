@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path"
@@ -143,18 +144,12 @@ func (d *Database) Migrate(ctx context.Context) error {
 
 		_, err = tx.ExecContext(ctx, string(data))
 		if err != nil {
-			if err := tx.Rollback(); err != nil {
-				return fmt.Errorf("rollback migration %d: %w", nextVer, err)
-			}
-			return fmt.Errorf("apply migration %d: %w", nextVer, err)
+			return rollbackMigration(tx, nextVer, fmt.Errorf("apply migration %d: %w", nextVer, err))
 		}
 
 		_, err = tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d;", nextVer))
 		if err != nil {
-			if err = tx.Rollback(); err != nil {
-				return fmt.Errorf("rollback migration %d: %w", nextVer, err)
-			}
-			return fmt.Errorf("update database version for migration %d: %w", nextVer, err)
+			return rollbackMigration(tx, nextVer, fmt.Errorf("update database version for migration %d: %w", nextVer, err))
 		}
 
 		err = tx.Commit()
@@ -164,6 +159,14 @@ func (d *Database) Migrate(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// rollbackMigration preserves the original failure and any rollback failure.
+func rollbackMigration(tx *sql.Tx, version int, cause error) error {
+	if err := tx.Rollback(); err != nil {
+		return errors.Join(cause, fmt.Errorf("rollback migration %d: %w", version, err))
+	}
+	return cause
 }
 
 func (d *Database) purgeTable(ctx context.Context, table string, column string, retentionDays int) error {

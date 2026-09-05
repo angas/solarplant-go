@@ -33,17 +33,25 @@ func runEnergyForecastTask(ctx context.Context, logger *slog.Logger, db *databas
 	slot := timex.UTC15Min()
 	var rows []database.EnergyForecastRow
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	// Iterate by 15-min slot, each slot gets its own historical average
 	for range int(cnfg.HoursAhead) * 4 {
+		if err := ctx.Err(); err != nil {
+			logger.DebugContext(ctx, "energy forecast task stopped", slog.Any("error", err))
+			return
+		}
 		slot = slot.Add15Min(1)
 
 		// Weather forecast is hourly — truncate to hour for lookup
 		hourSlot := slot.TruncToHour()
 		forecast, err := db.GetWeatherForecast(ctx, hourSlot)
 		if err != nil {
+			if ctx.Err() != nil {
+				logger.DebugContext(ctx, "energy forecast task stopped", slog.Any("error", ctx.Err()))
+				return
+			}
 			if errors.Is(err, sql.ErrNoRows) {
 				logger.WarnContext(ctx, "energy forecast task problem, forecast not found", "startAt", hourSlot.String())
 			} else {
@@ -53,6 +61,10 @@ func runEnergyForecastTask(ctx context.Context, logger *slog.Logger, db *databas
 
 		avg, err := calcHistoryAverage(ctx, logger, db, cnfg, slot)
 		if err != nil {
+			if ctx.Err() != nil {
+				logger.DebugContext(ctx, "energy forecast task stopped", slog.Any("error", ctx.Err()))
+				return
+			}
 			logger.ErrorContext(ctx, "energy forecast task error, calculate history average", slog.Any("error", err))
 		}
 

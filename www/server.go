@@ -139,7 +139,7 @@ func (s *Server) Run(ctx context.Context) {
 			}
 
 		case <-ctx.Done():
-			shutdownCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+			shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second*5)
 			defer cancel()
 			err := srv.Shutdown(shutdownCtx)
 			if err != nil {

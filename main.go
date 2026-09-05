@@ -26,8 +26,8 @@ import (
 var Version = "?.?.?"
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Logging of panics
 	defer func() {
@@ -139,19 +139,16 @@ func main() {
 		batteryRegulator.Run(ctx)
 	}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				logger.Info("main context done")
 				return
-			case sig := <-sigCh:
-				logger.Info("received signal", slog.Any("signal", sig))
-				cancel()
 			case batt := <-batteryRegulator.C:
+				if ctx.Err() != nil {
+					return
+				}
 				switch batt.Action {
 				case task.ActionAuto:
 					if err := fa.SetBatteryAuto(); err != nil {

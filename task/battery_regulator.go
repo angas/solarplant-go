@@ -72,23 +72,35 @@ func NewBatteryRegulator(
 func (br *BatteryRegulator) Run(ctx context.Context) {
 	br.logger.Debug("starting battery regulator", slog.Any("interval", br.strategy.Interval))
 
-	go func() {
-		br.logger.Debug("waiting for system to stabilize")
-		time.Sleep(time.Second * 60)
-		ticker := time.NewTicker(br.strategy.Interval)
-		for {
-			select {
-			case <-ctx.Done():
-				ticker.Stop()
-				return
-			case <-ticker.C:
-				br.adjustLoad(ctx)
-			}
+	go br.run(ctx)
+}
+
+func (br *BatteryRegulator) run(ctx context.Context) {
+	br.logger.Debug("waiting for system to stabilize")
+	startup := time.NewTimer(60 * time.Second)
+	defer startup.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-startup.C:
+	}
+
+	ticker := time.NewTicker(br.strategy.Interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			br.adjustLoad(ctx)
 		}
-	}()
+	}
 }
 
 func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	gridPwr := br.faData.GridPower()
 	battLvl := br.faData.BatteryLevel()
 	battPwr := br.faData.BatteryPower()
@@ -96,6 +108,9 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 
 	startAt := timex.UTC15Min()
 	planning, err := br.db.GetPlanning(ctx, startAt)
+	if ctx.Err() != nil {
+		return
+	}
 	if err != nil {
 		planning = database.PlanningRow{
 			StartAt:  startAt,
@@ -140,8 +155,12 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 			slog.String("strategy", planning.Strategy),
 			slog.Any("instruction", bi))
 
-		br.lastInstruction = bi
-		br.C <- bi
+		select {
+		case <-ctx.Done():
+			return
+		case br.C <- bi:
+			br.lastInstruction = bi
+		}
 	}
 
 	switch planning.Strategy {

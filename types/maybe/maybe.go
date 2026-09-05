@@ -1,5 +1,7 @@
 package maybe
 
+import "database/sql"
+
 type Maybe[T any] struct {
 	value T
 	valid bool
@@ -18,11 +20,17 @@ func None[T any]() Maybe[T] {
 	}
 }
 
-func SqlNull[T any](value T, valid bool) Maybe[T] {
-	return Maybe[T]{
-		value: value,
-		valid: valid,
+// FromSQL preserves the value and validity of a nullable SQL value.
+func FromSQL[T any](value sql.Null[T]) Maybe[T] {
+	return Maybe[T]{value: value.V, valid: value.Valid}
+}
+
+// Map transforms a present value, leaving an absent value absent.
+func (m Maybe[T]) Map[U any](transform func(T) U) Maybe[U] {
+	if !m.valid {
+		return None[U]()
 	}
+	return Some(transform(m.value))
 }
 
 func (m Maybe[T]) IsValid() bool {

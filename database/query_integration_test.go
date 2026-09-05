@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"errors"
 	"log/slog"
 	"slices"
 	"testing"
@@ -31,6 +32,13 @@ func TestCollectionQueries(t *testing.T) {
 	averages, err := db.GetHourlyAvgEnergyPriceFrom(ctx, start)
 	if err != nil || !slices.Equal(averages, []EnergyPriceRow{{StartAt: start, Price: 2}}) {
 		t.Fatalf("hourly prices = %v, error = %v", averages, err)
+	}
+	average, err := db.GetAvgEnergyPriceForHour(ctx, start)
+	if err != nil || average.Price != 2 || average.StartAt != start {
+		t.Fatalf("single hourly average = %v, error = %v", average, err)
+	}
+	if _, err := db.GetAvgEnergyPriceForHour(ctx, start.AddHours(1)); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("empty hourly average error = %v; want sql.ErrNoRows", err)
 	}
 	for _, query := range []func(timex.BucketTime) ([]EnergyPriceRow, error){
 		func(from timex.BucketTime) ([]EnergyPriceRow, error) { return db.GetEnergyPriceFrom(ctx, from) },
@@ -76,9 +84,9 @@ func TestCollectionQueries(t *testing.T) {
 		t.Fatalf("detailed planning = %v, error = %v", detailed, err)
 	}
 	wantDetailed := DetailedPlanningRow{
-		PlanningRow: planning[0], EnergyPrice: sql.NullFloat64{Float64: 1, Valid: true},
-		ProductionEstimated: sql.NullFloat64{Float64: 3, Valid: true}, ConsumptionEstimated: sql.NullFloat64{Float64: 5, Valid: true},
-		CloudCover: sql.NullInt16{Int16: 2, Valid: true}, Temperature: sql.NullFloat64{Float64: 11, Valid: true}, Precipitation: sql.NullFloat64{Float64: 1, Valid: true},
+		PlanningRow: planning[0], EnergyPrice: sql.Null[float64]{V: 1, Valid: true},
+		ProductionEstimated: sql.Null[float64]{V: 3, Valid: true}, ConsumptionEstimated: sql.Null[float64]{V: 5, Valid: true},
+		CloudCover: sql.Null[int16]{V: 2, Valid: true}, Temperature: sql.Null[float64]{V: 11, Valid: true}, Precipitation: sql.Null[float64]{V: 1, Valid: true},
 	}
 	if detailed[0] != wantDetailed || detailed[1].ProductionEstimated.Valid || detailed[1].ConsumptionEstimated.Valid || detailed[1].CloudCover != wantDetailed.CloudCover {
 		t.Fatalf("joined values or NULLs changed: %v", detailed)

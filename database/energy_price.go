@@ -95,8 +95,8 @@ func (d *Database) GetHourlyAvgEnergyPriceFrom(ctx context.Context, startAt time
 }
 
 func (d *Database) scanEnergyPriceRow(ctx context.Context, scan func(dest ...any) error) (EnergyPriceRow, error) {
-	var startAtStr sql.NullString
-	var price sql.NullFloat64
+	var startAtStr sql.Null[string]
+	var price sql.Null[float64]
 	err := scan(&startAtStr, &price)
 	if err == sql.ErrNoRows {
 		return EnergyPriceRow{}, sql.ErrNoRows
@@ -109,13 +109,13 @@ func (d *Database) scanEnergyPriceRow(ctx context.Context, scan func(dest ...any
 		return EnergyPriceRow{}, sql.ErrNoRows
 	}
 
-	startAt, err := timex.ParseBucketTime(startAtStr.String, energyPriceBucketSize)
+	startAt, err := timex.ParseBucketTime(startAtStr.V, energyPriceBucketSize)
 	if err != nil {
-		d.logger.WarnContext(ctx, "getting energy price, parsing start_at", slog.String("startAt", startAtStr.String), slog.Any("error", err))
+		d.logger.WarnContext(ctx, "getting energy price, parsing start_at", slog.String("startAt", startAtStr.V), slog.Any("error", err))
 		return EnergyPriceRow{}, err
 	}
 
-	return EnergyPriceRow{StartAt: startAt, Price: price.Float64}, nil
+	return EnergyPriceRow{StartAt: startAt, Price: price.V}, nil
 }
 
 func (d *Database) PurgeEnergyPrice(ctx context.Context, retentionDays int) error {

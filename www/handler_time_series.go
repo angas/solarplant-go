@@ -29,9 +29,9 @@ type timeSeriesTemplRow struct {
 	GridImport           maybe.Maybe[float64]
 	CashFlow             maybe.Maybe[float64]
 	Strategy             maybe.Maybe[string]
-	ComparedToThisSlot int
-	ComparedToThisHour int
-	HourRowSpan        int // >0 on the first row of each hour group (rendered with rowspan); 0 on subsequent rows
+	ComparedToThisSlot   int
+	ComparedToThisHour   int
+	HourRowSpan          int // >0 on the first row of each hour group (rendered with rowspan); 0 on subsequent rows
 }
 
 func NewTimeSeriesHandler(logger *slog.Logger, db *database.Database, tm *TemplateManager, recentHours *database.RecentHours) http.HandlerFunc {
@@ -91,14 +91,14 @@ func NewTimeSeriesHandler(logger *slog.Logger, db *database.Database, tm *Templa
 			for _, f := range forecast {
 				row := timeSeriesTemplRow{
 					Timestamp:            f.StartAt,
-					CloudCover:           maybe.SqlNull(uint8(f.CloudCover.Int16), f.CloudCover.Valid),
-					Temperature:          maybe.SqlNull(f.Temperature.Float64, f.Temperature.Valid),
-					Precipitation:        maybe.SqlNull(f.Precipitation.Float64, f.Precipitation.Valid),
-					EnergyPrice:          maybe.SqlNull(f.EnergyPrice.Float64, f.EnergyPrice.Valid),
+					CloudCover:           maybe.FromSQL(f.CloudCover).Map(func(value int16) uint8 { return uint8(value) }),
+					Temperature:          maybe.FromSQL(f.Temperature),
+					Precipitation:        maybe.FromSQL(f.Precipitation),
+					EnergyPrice:          maybe.FromSQL(f.EnergyPrice),
 					Production:           maybe.None[float64](),
-					ProductionEstimated:  maybe.SqlNull(f.ProductionEstimated.Float64, f.ProductionEstimated.Valid),
+					ProductionEstimated:  maybe.FromSQL(f.ProductionEstimated),
 					Consumption:          maybe.None[float64](),
-					ConsumptionEstimated: maybe.SqlNull(f.ConsumptionEstimated.Float64, f.ConsumptionEstimated.Valid),
+					ConsumptionEstimated: maybe.FromSQL(f.ConsumptionEstimated),
 					GridExport:           maybe.None[float64](),
 					GridImport:           maybe.None[float64](),
 					BatteryLevel:         maybe.None[float64](),

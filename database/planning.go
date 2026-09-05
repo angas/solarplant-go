@@ -18,12 +18,12 @@ type PlanningRow struct {
 
 type DetailedPlanningRow struct {
 	PlanningRow
-	EnergyPrice          sql.NullFloat64
-	ProductionEstimated  sql.NullFloat64
-	ConsumptionEstimated sql.NullFloat64
-	CloudCover           sql.NullInt16
-	Temperature          sql.NullFloat64
-	Precipitation        sql.NullFloat64
+	EnergyPrice          sql.Null[float64]
+	ProductionEstimated  sql.Null[float64]
+	ConsumptionEstimated sql.Null[float64]
+	CloudCover           sql.Null[int16]
+	Temperature          sql.Null[float64]
+	Precipitation        sql.Null[float64]
 }
 
 func (d *Database) SavePanning(ctx context.Context, row PlanningRow) error {

@@ -4,13 +4,11 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/angas/solarplant-go/config"
-	"github.com/angas/solarplant-go/database"
 	"github.com/angas/solarplant-go/ferroamp"
 )
 
@@ -38,14 +36,7 @@ func TestBatteryRegulatorCancelStartup(t *testing.T) {
 }
 
 func TestBatteryRegulatorInstructionDelivery(t *testing.T) {
-	db, err := database.New(t.Context(), filepath.Join(t.TempDir(), "regulator.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(db.Close)
-	if err := db.Migrate(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	db := newRegulatorTestDatabase(t)
 	for _, deliver := range []bool{false, true} {
 		name := "cancel blocked send"
 		if deliver {

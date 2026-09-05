@@ -26,7 +26,7 @@ func TestSQLiteHandlerWithMultiHandler(t *testing.T) {
 
 	var console bytes.Buffer
 	logger := slog.New(slog.NewMultiHandler(
-		tint.NewHandler(&console, &tint.Options{Level: slog.LevelInfo, NoColor: true}),
+		tint.NewTextHandler(&console, &tint.Options{Level: slog.LevelInfo, NoColor: true}),
 		NewSQLiteHandler(db, slog.LevelWarn, LogAttrFormatText),
 	)).With("component", "integration")
 

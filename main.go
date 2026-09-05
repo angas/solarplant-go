@@ -47,10 +47,7 @@ func main() {
 
 	// Initiate logging in two steps, first by setting up the console handler
 	// then bringing up the database in order to also log to the database.
-	consoleHandler := tint.NewHandler(os.Stdout, &tint.Options{
-		Level:      cnfg.Logging.GetConsoleLevel(),
-		TimeFormat: time.RFC3339,
-	})
+	consoleHandler := tint.NewTextHandler(os.Stdout, &tint.Options{Level: cnfg.Logging.GetConsoleLevel(), TimeFormat: time.RFC3339})
 	slog.New(consoleHandler).DebugContext(ctx, "solarplant is starting...", slog.String("version", Version))
 
 	db, err := database.New(ctx, cnfg.Database.Path)

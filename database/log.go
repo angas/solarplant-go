@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"time"
@@ -36,35 +37,27 @@ func (d *Database) GetLogEntries(ctx context.Context, minLvl slog.Level, page, p
 		pageSize = 10
 	}
 
-	rows, err := d.read.QueryContext(ctx, `
+	entries, err := d.queryRows(ctx, `
 		SELECT timestamp, level, message, attrs
 		FROM log
 		WHERE level >= ?
 		ORDER BY id DESC
 		LIMIT ? OFFSET ?`,
-		minLvl, pageSize, (page-1)*pageSize)
-
+		func(rows *sql.Rows) (LogEntryRow, error) {
+			var ts string
+			var r LogEntryRow
+			err := rows.Scan(&ts, &r.Level, &r.Message, &r.Attrs)
+			if err != nil {
+				return LogEntryRow{}, err
+			}
+			r.Timestamp, err = time.Parse(time.RFC3339, ts)
+			if err != nil {
+				return LogEntryRow{}, fmt.Errorf("parsing timestamp: %w", err)
+			}
+			return r, nil
+		}, minLvl, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("fetching log entries: %w", err)
-	}
-	defer rows.Close()
-
-	var ts string
-	var entries []LogEntryRow
-	for rows.Next() {
-		var r LogEntryRow
-		err := rows.Scan(&ts, &r.Level, &r.Message, &r.Attrs)
-		if err != nil {
-			return nil, err
-		}
-		r.Timestamp, err = time.Parse(time.RFC3339, ts)
-		if err != nil {
-			return nil, fmt.Errorf("parsing timestamp: %w", err)
-		}
-		entries = append(entries, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading log rows: %w", err)
 	}
 
 	return entries, nil

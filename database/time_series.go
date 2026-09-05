@@ -109,7 +109,7 @@ func (d *Database) SaveTimeSeries(ctx context.Context, row TimeSeriesRow) error 
 
 // Returns time series entries from this hour and every day following
 func (d *Database) GetTimeSeriesForHour(ctx context.Context, hour timex.BucketTime) ([]TimeSeriesRow, error) {
-	rows, err := d.read.Query(`
+	ts, err := d.queryRows(ctx, `
 		SELECT
 			timestamp,
 			cloud_cover,
@@ -130,23 +130,18 @@ func (d *Database) GetTimeSeriesForHour(ctx context.Context, hour timex.BucketTi
 		FROM time_series
 		WHERE timestamp >= ? AND STRFTIME('%H', timestamp) = ?
 		ORDER BY timestamp ASC`,
-		hour.String(), fmt.Sprintf("%02d", hour.Time().Hour()))
+		func(rows *sql.Rows) (TimeSeriesRow, error) {
+			return d.scanTimeSeriesRow(ctx, rows, timex.BucketSize15Minutes)
+		}, hour.String(), fmt.Sprintf("%02d", hour.Time().Hour()))
 	if err != nil {
 		return nil, fmt.Errorf("fetching time series from hour %s: %w", hour.String(), err)
-	}
-
-	defer rows.Close()
-
-	ts, err := d.scanTimeSeriesHours(rows)
-	if err != nil {
-		return ts, fmt.Errorf("scanning time series row: %w", err)
 	}
 
 	return ts, nil
 }
 
 func (d *Database) GetTimeSeriesFrom(ctx context.Context, from timex.BucketTime) ([]TimeSeriesRow, error) {
-	rows, err := d.read.QueryContext(ctx, `
+	ts, err := d.queryRows(ctx, `
 		SELECT
 			timestamp,
 			cloud_cover,
@@ -167,68 +162,53 @@ func (d *Database) GetTimeSeriesFrom(ctx context.Context, from timex.BucketTime)
 		FROM time_series
 		WHERE timestamp >= ?
 		ORDER BY timestamp DESC`,
-		from.String())
+		func(rows *sql.Rows) (TimeSeriesRow, error) {
+			return d.scanTimeSeriesRow(ctx, rows, timex.BucketSize15Minutes)
+		}, from.String())
 	if err != nil {
 		return nil, fmt.Errorf("fetching time series from %s: %w", from.String(), err)
-	}
-
-	defer rows.Close()
-
-	ts, err := d.scanTimeSeriesHours(rows)
-	if err != nil {
-		return ts, fmt.Errorf("scanning time series row: %w", err)
 	}
 
 	return ts, nil
 }
 
-func (d *Database) scanTimeSeriesHours(rows *sql.Rows) ([]TimeSeriesRow, error) {
-	var tsr []TimeSeriesRow
-	for rows.Next() {
-		var t TimeSeriesRow
-		var tsStr string
-		err := rows.Scan(
-			&tsStr,
-			&t.CloudCover,
-			&t.Temperature,
-			&t.Precipitation,
-			&t.EnergyPriceAvg,
-			&t.Production,
-			&t.ProductionEstimated,
-			&t.ProductionLifetime,
-			&t.Consumption,
-			&t.ConsumptionEstimated,
-			&t.GridImport,
-			&t.GridExport,
-			&t.BatteryLevel,
-			&t.BatteryNetLoad,
-			&t.CashFlow,
-			&t.Strategy)
-		if err != nil {
-			return nil, err
-		}
-
-		t.Timestamp, err = timex.ParseBucketTime(tsStr, timex.BucketSize15Minutes)
-		if err != nil {
-			d.logger.Warn("parsing timestamp", slog.String("timestamp", tsStr), slog.String("error", err.Error()))
-			continue
-		}
-
-		tsr = append(tsr, t)
+func (d *Database) scanTimeSeriesRow(ctx context.Context, rows *sql.Rows, bucketSize timex.BucketSize) (TimeSeriesRow, error) {
+	var t TimeSeriesRow
+	var tsStr string
+	err := rows.Scan(
+		&tsStr,
+		&t.CloudCover,
+		&t.Temperature,
+		&t.Precipitation,
+		&t.EnergyPriceAvg,
+		&t.Production,
+		&t.ProductionEstimated,
+		&t.ProductionLifetime,
+		&t.Consumption,
+		&t.ConsumptionEstimated,
+		&t.GridImport,
+		&t.GridExport,
+		&t.BatteryLevel,
+		&t.BatteryNetLoad,
+		&t.CashFlow,
+		&t.Strategy)
+	if err != nil {
+		return TimeSeriesRow{}, err
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("scanning time series rows: %w", err)
+	t.Timestamp, err = timex.ParseBucketTime(tsStr, bucketSize)
+	if err != nil {
+		d.logger.WarnContext(ctx, "parsing time series timestamp", slog.String("timestamp", tsStr), slog.Any("error", err))
+		return TimeSeriesRow{}, errSkipRow
 	}
-
-	return tsr, nil
+	return t, nil
 }
 
 // GetHourlySummaryForHour returns historical hourly totals for a given hour-of-day,
 // aggregating any 15-min rows within each hour into a single row per date.
 // This correctly handles both old hourly rows and new 15-min rows during transition.
 func (d *Database) GetHourlySummaryForHour(ctx context.Context, hour timex.BucketTime) ([]TimeSeriesRow, error) {
-	rows, err := d.read.QueryContext(ctx, `
+	tsr, err := d.queryRows(ctx, `
 		SELECT
 			STRFTIME('%Y-%m-%dT%H:00:00Z', timestamp) AS hour_ts,
 			AVG(cloud_cover),
@@ -250,48 +230,11 @@ func (d *Database) GetHourlySummaryForHour(ctx context.Context, hour timex.Bucke
 		WHERE timestamp >= ? AND STRFTIME('%H', timestamp) = ?
 		GROUP BY hour_ts
 		ORDER BY hour_ts ASC`,
-		hour.String(), fmt.Sprintf("%02d", hour.Time().Hour()))
+		func(rows *sql.Rows) (TimeSeriesRow, error) {
+			return d.scanTimeSeriesRow(ctx, rows, timex.BucketSizeHour)
+		}, hour.String(), fmt.Sprintf("%02d", hour.Time().Hour()))
 	if err != nil {
 		return nil, fmt.Errorf("fetching hourly summary for hour %s: %w", hour.String(), err)
-	}
-	defer rows.Close()
-
-	var tsr []TimeSeriesRow
-	for rows.Next() {
-		var t TimeSeriesRow
-		var tsStr string
-		err := rows.Scan(
-			&tsStr,
-			&t.CloudCover,
-			&t.Temperature,
-			&t.Precipitation,
-			&t.EnergyPriceAvg,
-			&t.Production,
-			&t.ProductionEstimated,
-			&t.ProductionLifetime,
-			&t.Consumption,
-			&t.ConsumptionEstimated,
-			&t.GridImport,
-			&t.GridExport,
-			&t.BatteryLevel,
-			&t.BatteryNetLoad,
-			&t.CashFlow,
-			&t.Strategy)
-		if err != nil {
-			return nil, err
-		}
-
-		t.Timestamp, err = timex.ParseBucketTime(tsStr, timex.BucketSizeHour)
-		if err != nil {
-			d.logger.Warn("parsing hourly summary timestamp", slog.String("timestamp", tsStr), slog.String("error", err.Error()))
-			continue
-		}
-
-		tsr = append(tsr, t)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("scanning hourly summary rows: %w", err)
 	}
 
 	return tsr, nil
@@ -302,7 +245,7 @@ func (d *Database) GetHourlySummaryForHour(ctx context.Context, hour timex.Bucke
 // from a different historical date. The slot parameter determines the lookback start
 // and the hour:minute to match.
 func (d *Database) Get15MinSummaryForSlot(ctx context.Context, slot timex.BucketTime) ([]TimeSeriesRow, error) {
-	rows, err := d.read.QueryContext(ctx, `
+	ts, err := d.queryRows(ctx, `
 		SELECT
 			timestamp,
 			cloud_cover,
@@ -323,24 +266,19 @@ func (d *Database) Get15MinSummaryForSlot(ctx context.Context, slot timex.Bucket
 		FROM time_series
 		WHERE timestamp >= ? AND STRFTIME('%H', timestamp) = ? AND STRFTIME('%M', timestamp) = ?
 		ORDER BY timestamp ASC`,
-		slot.String(),
+		func(rows *sql.Rows) (TimeSeriesRow, error) {
+			return d.scanTimeSeriesRow(ctx, rows, timex.BucketSize15Minutes)
+		}, slot.String(),
 		fmt.Sprintf("%02d", slot.Time().Hour()),
 		fmt.Sprintf("%02d", slot.Time().Minute()))
 	if err != nil {
 		return nil, fmt.Errorf("fetching 15-min summary for slot %s: %w", slot.String(), err)
 	}
-	defer rows.Close()
-
-	ts, err := d.scanTimeSeriesHours(rows)
-	if err != nil {
-		return ts, fmt.Errorf("scanning 15-min summary row: %w", err)
-	}
-
 	return ts, nil
 }
 
 func (d *Database) GetDailyStats(ctx context.Context, noOfDays int) ([]DailyStats, error) {
-	rows, err := d.read.QueryContext(ctx, `
+	dailyStats, err := d.queryRows(ctx, `
 		SELECT
 			STRFTIME('%Y-%m-%d', timestamp) AS day,
 			AVG(cloud_cover),
@@ -358,33 +296,28 @@ func (d *Database) GetDailyStats(ctx context.Context, noOfDays int) ([]DailyStat
 		GROUP BY day
 		ORDER BY day DESC
 		LIMIT ?`,
-		noOfDays)
+		func(rows *sql.Rows) (DailyStats, error) {
+			var ds DailyStats
+			err := rows.Scan(
+				&ds.Date,
+				&ds.AvgCloudCover,
+				&ds.AvgTemperature,
+				&ds.AvgPrecipitation,
+				&ds.AvgEnergyPrice,
+				&ds.TotProduction,
+				&ds.DiffProduction,
+				&ds.TotConsumption,
+				&ds.DiffConsumption,
+				&ds.TotGridImport,
+				&ds.TotGridExport,
+				&ds.TotCashFlow)
+			if err != nil {
+				return DailyStats{}, fmt.Errorf("scanning daily stats: %w", err)
+			}
+			return ds, nil
+		}, noOfDays)
 	if err != nil {
 		return []DailyStats{}, fmt.Errorf("fetching daily stats: %w", err)
-	}
-
-	defer rows.Close()
-
-	var dailyStats []DailyStats
-	for rows.Next() {
-		var ds DailyStats
-		err := rows.Scan(
-			&ds.Date,
-			&ds.AvgCloudCover,
-			&ds.AvgTemperature,
-			&ds.AvgPrecipitation,
-			&ds.AvgEnergyPrice,
-			&ds.TotProduction,
-			&ds.DiffProduction,
-			&ds.TotConsumption,
-			&ds.DiffConsumption,
-			&ds.TotGridImport,
-			&ds.TotGridExport,
-			&ds.TotCashFlow)
-		if err != nil {
-			return []DailyStats{}, fmt.Errorf("scanning daily stats: %w", err)
-		}
-		dailyStats = append(dailyStats, ds)
 	}
 
 	return dailyStats, nil

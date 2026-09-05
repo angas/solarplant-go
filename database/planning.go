@@ -70,42 +70,34 @@ func (d *Database) GetPlanning(ctx context.Context, startAt timex.BucketTime) (P
 }
 
 func (d *Database) GetPlanningFrom(ctx context.Context, startAt timex.BucketTime) ([]PlanningRow, error) {
-	rows, err := d.read.QueryContext(ctx, `
+	res, err := d.queryRows(ctx, `
 		SELECT start_at, strategy
 		FROM planning
 		WHERE start_at >= ?
 		ORDER BY start_at ASC`,
-		startAt.String())
+		func(rows *sql.Rows) (PlanningRow, error) {
+			var row PlanningRow
+			var startAtStr string
+			err := rows.Scan(&startAtStr, &row.Strategy)
+			if err != nil {
+				return PlanningRow{}, err
+			}
+			row.StartAt, err = timex.ParseBucketTime(startAtStr, planningBucketSize)
+			if err != nil {
+				d.logger.WarnContext(ctx, "parsing planning row start_at", slog.String("startAt", startAtStr), slog.Any("error", err))
+				return PlanningRow{}, errSkipRow
+			}
+			return row, nil
+		}, startAt.String())
 	if err != nil {
 		return nil, fmt.Errorf("fetching planning from %s: %w", startAt.String(), err)
-	}
-	defer rows.Close()
-
-	var res []PlanningRow
-	for rows.Next() {
-		var row PlanningRow
-		var startAtStr string
-		err := rows.Scan(&startAtStr, &row.Strategy)
-		if err != nil {
-			return nil, err
-		}
-		row.StartAt, err = timex.ParseBucketTime(startAtStr, planningBucketSize)
-		if err != nil {
-			d.logger.WarnContext(ctx, "parsing planning row start_at", slog.String("startAt", startAtStr), slog.Any("error", err))
-			continue
-		}
-		res = append(res, row)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating planning from %s: %w", startAt.String(), err)
 	}
 
 	return res, nil
 }
 
 func (d *Database) GetDetailedPlanningFrom(ctx context.Context, startAt timex.BucketTime) ([]DetailedPlanningRow, error) {
-	rows, err := d.read.QueryContext(ctx, `
+	res, err := d.queryRows(ctx, `
 		SELECT
 	    pl.start_at,
 	    pl.strategy,
@@ -121,39 +113,30 @@ func (d *Database) GetDetailedPlanningFrom(ctx context.Context, startAt timex.Bu
 		LEFT OUTER JOIN weather_forecast wf ON SUBSTR(wf.start_at, 1, 13) = SUBSTR(pl.start_at, 1, 13)
 		WHERE (pl.start_at >= ?)
 		ORDER BY pl.start_at ASC;`,
-		startAt.String())
+		func(rows *sql.Rows) (DetailedPlanningRow, error) {
+			var row DetailedPlanningRow
+			var startAtStr string
+			err := rows.Scan(
+				&startAtStr,
+				&row.Strategy,
+				&row.EnergyPrice,
+				&row.ProductionEstimated,
+				&row.ConsumptionEstimated,
+				&row.CloudCover,
+				&row.Temperature,
+				&row.Precipitation)
+			if err != nil {
+				return DetailedPlanningRow{}, err
+			}
+			row.StartAt, err = timex.ParseBucketTime(startAtStr, planningBucketSize)
+			if err != nil {
+				d.logger.WarnContext(ctx, "parsing detailed planning row start_at", slog.String("startAt", startAtStr), slog.Any("error", err))
+				return DetailedPlanningRow{}, errSkipRow
+			}
+			return row, nil
+		}, startAt.String())
 	if err != nil {
 		return nil, fmt.Errorf("fetching detailed planning from %s: %w", startAt.String(), err)
-	}
-	defer rows.Close()
-
-	var res []DetailedPlanningRow
-	for rows.Next() {
-		var row DetailedPlanningRow
-		var startAtStr string
-		err := rows.Scan(
-			&startAtStr,
-			&row.Strategy,
-			&row.EnergyPrice,
-			&row.ProductionEstimated,
-			&row.ConsumptionEstimated,
-			&row.CloudCover,
-			&row.Temperature,
-			&row.Precipitation)
-		if err != nil {
-			return nil, err
-		}
-		row.StartAt, err = timex.ParseBucketTime(startAtStr, planningBucketSize)
-		if err != nil {
-			d.logger.WarnContext(ctx, "parsing detailed planning row start_at", slog.String("startAt", startAtStr), slog.Any("error", err))
-			continue
-		}
-
-		res = append(res, row)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating detailed planning from %s: %w", startAt.String(), err)
 	}
 
 	return res, nil

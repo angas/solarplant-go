@@ -58,34 +58,40 @@ func (d *Database) GetAvgEnergyPriceForHour(ctx context.Context, hour timex.Buck
 }
 
 func (d *Database) GetEnergyPriceFrom(ctx context.Context, startAt timex.BucketTime) ([]EnergyPriceRow, error) {
-	rows, err := d.read.QueryContext(ctx, `
+	prices, err := d.queryRows(ctx, `
 		SELECT start_at, price
 		FROM energy_price
 		WHERE start_at >= ?
 		ORDER BY start_at ASC`,
-		startAt.String())
+		func(rows *sql.Rows) (EnergyPriceRow, error) {
+			return d.scanEnergyPriceRow(ctx, rows.Scan)
+		}, startAt.String())
 	if err != nil {
 		return nil, fmt.Errorf("fetching energy price (%s): %w", startAt.String(), err)
 	}
-	defer rows.Close()
-
-	return d.scanEnergyPriceRows(ctx, rows)
+	if prices == nil {
+		prices = []EnergyPriceRow{}
+	}
+	return prices, nil
 }
 
 func (d *Database) GetHourlyAvgEnergyPriceFrom(ctx context.Context, startAt timex.BucketTime) ([]EnergyPriceRow, error) {
-	rows, err := d.read.QueryContext(ctx, `
+	prices, err := d.queryRows(ctx, `
 		SELECT STRFTIME('%Y-%m-%dT%H:00:00Z', start_at) hour, AVG(price)
     FROM energy_price
     WHERE start_at >= ?
     GROUP BY hour
     ORDER BY hour ASC`,
-		startAt.String())
+		func(rows *sql.Rows) (EnergyPriceRow, error) {
+			return d.scanEnergyPriceRow(ctx, rows.Scan)
+		}, startAt.String())
 	if err != nil {
 		return nil, fmt.Errorf("fetching average energy price (%s): %w", startAt.String(), err)
 	}
-	defer rows.Close()
-
-	return d.scanEnergyPriceRows(ctx, rows)
+	if prices == nil {
+		prices = []EnergyPriceRow{}
+	}
+	return prices, nil
 }
 
 func (d *Database) scanEnergyPriceRow(ctx context.Context, scan func(dest ...any) error) (EnergyPriceRow, error) {
@@ -110,24 +116,6 @@ func (d *Database) scanEnergyPriceRow(ctx context.Context, scan func(dest ...any
 	}
 
 	return EnergyPriceRow{StartAt: startAt, Price: price.Float64}, nil
-}
-
-func (d *Database) scanEnergyPriceRows(ctx context.Context, rows *sql.Rows) ([]EnergyPriceRow, error) {
-	eps := []EnergyPriceRow{}
-	for rows.Next() {
-		ep, err := d.scanEnergyPriceRow(ctx, rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-
-		eps = append(eps, ep)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating energy price rows: %w", err)
-	}
-
-	return eps, nil
 }
 
 func (d *Database) PurgeEnergyPrice(ctx context.Context, retentionDays int) error {

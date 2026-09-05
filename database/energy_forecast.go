@@ -68,34 +68,26 @@ func (d *Database) GetEnergyForecast(ctx context.Context, startAt timex.BucketTi
 }
 
 func (d *Database) GetEnergyForecastFrom(ctx context.Context, startAt timex.BucketTime) ([]EnergyForecastRow, error) {
-	rows, err := d.read.QueryContext(ctx, `
+	efs, err := d.queryRows(ctx, `
 		SELECT start_at, production,consumption
 		FROM energy_forecast
 		WHERE (start_at >= ?)`,
-		startAt.String())
+		func(rows *sql.Rows) (EnergyForecastRow, error) {
+			var ef EnergyForecastRow
+			var startAtStr string
+			err := rows.Scan(&startAtStr, &ef.Production, &ef.Consumption)
+			if err != nil {
+				return EnergyForecastRow{}, err
+			}
+			ef.StartAt, err = timex.ParseBucketTime(startAtStr, energyForecastBucketSize)
+			if err != nil {
+				d.logger.WarnContext(ctx, "failed to parse start_at", slog.String("startAt", startAtStr), slog.Any("error", err))
+				return EnergyForecastRow{}, errSkipRow
+			}
+			return ef, nil
+		}, startAt.String())
 	if err != nil {
 		return nil, fmt.Errorf("fetching energy forecast from %s: %w", startAt.String(), err)
-	}
-	defer rows.Close()
-
-	var efs []EnergyForecastRow
-	var startAtStr string
-	for rows.Next() {
-		var ef EnergyForecastRow
-		err := rows.Scan(&startAtStr, &ef.Production, &ef.Consumption)
-		if err != nil {
-			return nil, err
-		}
-		ef.StartAt, err = timex.ParseBucketTime(startAtStr, energyForecastBucketSize)
-		if err != nil {
-			d.logger.WarnContext(ctx, "failed to parse start_at", slog.String("startAt", startAtStr), slog.Any("error", err))
-			continue
-		}
-		efs = append(efs, ef)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating energy forecast rows: %w", err)
 	}
 
 	return efs, nil

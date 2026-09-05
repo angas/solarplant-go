@@ -59,7 +59,7 @@ func main() {
 	}
 	defer db.Close()
 
-	logger := slog.New(logging.NewMultiHandler(
+	logger := slog.New(slog.NewMultiHandler(
 		consoleHandler,
 		logging.NewSQLiteHandler(db, cnfg.Logging.GetDbLevel(), cnfg.Logging.GetDbAttrsFormat())))
 	slog.SetDefault(logger)

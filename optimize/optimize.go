@@ -48,11 +48,11 @@ func BestStrategies(input Input) Output {
 	return bestStrategiesDP(input)
 }
 
-// bestStrategiesBruteForce generates all permutations and finds the lowest-cost one.
+// bestStrategiesBruteForce evaluates permutations lazily and retains the lowest-cost one.
 // Kept for cross-validation in tests.
 func bestStrategiesBruteForce(input Input) Output {
 	best := Output{Cost: math.Inf(1), Strategy: []Strategy{}}
-	for _, p := range permute(len(input.Forecast)) {
+	for p := range permute(len(input.Forecast)) {
 		cost, battLvl := costForPermutation(input, p)
 		if cost < best.Cost {
 			best = Output{Cost: cost, BatteryLevel: battLvl, Strategy: p}

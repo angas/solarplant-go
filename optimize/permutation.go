@@ -1,27 +1,31 @@
 package optimize
 
-import "math"
+import (
+	"iter"
+	"slices"
+)
 
-// Generates all possible permutations (cartesian product) of strategies
-// for a given number of hours.
-func permute(hours int) [][]Strategy {
-	if hours < 1 {
-		return [][]Strategy{{}}
-	}
+// permute yields the cartesian product of strategies for the given slot count.
+// Each yielded slice is independently owned. Non-positive counts yield one empty
+// slice, and each iteration starts again from the all-default combination.
+func permute(slots int) iter.Seq[[]Strategy] {
+	return func(yield func([]Strategy) bool) {
+		perm := make([]Strategy, max(0, slots))
+		for {
+			if !yield(slices.Clone(perm)) {
+				return
+			}
 
-	count := int(math.Pow(float64(strategyCount), float64(hours)))
-	result := make([][]Strategy, count)
-
-	for i := range count {
-		temp := i
-		perm := make([]Strategy, hours)
-		for j := hours - 1; j >= 0; j-- {
-			perm[j] = Strategy(temp % int(strategyCount))
-			temp /= int(strategyCount)
+			// Increment from the last slot, carrying into earlier slots as needed.
+			i := len(perm) - 1
+			for i >= 0 && perm[i] == strategyCount-1 {
+				perm[i] = StrategyDefault
+				i--
+			}
+			if i < 0 {
+				return
+			}
+			perm[i]++
 		}
-
-		result[i] = perm
 	}
-
-	return result
 }

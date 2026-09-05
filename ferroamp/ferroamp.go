@@ -95,89 +95,7 @@ func (fa *Ferroamp) Connect() error {
 	fa.inactivityWatchdog()
 
 	token := fa.mtqqClient.SubscribeMultiple(topics, func(client mqtt.Client, msg mqtt.Message) {
-		fa.lastMessageTime.Reset()
-
-		switch msg.Topic() {
-		case "extapi/data/ehub":
-			var ehub EhubMessage
-			if err := json.Unmarshal(msg.Payload(), &ehub); err != nil {
-				fa.logger.Error("error when reading EHUB message", slog.Any("error", err))
-			} else if fa.OnEhubMessage != nil {
-				fa.OnEhubMessage(&ehub)
-			}
-
-		case "extapi/data/sso":
-			var sso SsoMessage
-			if err := json.Unmarshal(msg.Payload(), &sso); err != nil {
-				fa.logger.Error("error when reading SSO message", slog.Any("error", err))
-			} else if fa.OnSsoMessage != nil {
-				fa.OnSsoMessage(&sso)
-			}
-
-			faultCode := uint16(sso.FaultCode.Value)
-			if faultCode > 0 && faultCode != fa.lastSsoFaultCode {
-				fa.logger.Warn("fault code from SSO, please contact ferroamp support",
-					slog.Any("faultCode", faultCode),
-					slog.Any("lastFaultCode", fa.lastSsoFaultCode))
-			}
-			fa.lastSsoFaultCode = faultCode
-
-		case "extapi/data/eso":
-			var eso EsoMessage
-			if err := json.Unmarshal(msg.Payload(), &eso); err != nil {
-				fa.logger.Error("error when reading ESO message", slog.Any("error", err))
-			} else if fa.OnEsoMessage != nil {
-				fa.OnEsoMessage(&eso)
-			}
-
-			fa.handleEsoFaultCode(uint16(eso.FaultCode.Value))
-
-		case "extapi/data/esm":
-			var esm EsmMessage
-			if err := json.Unmarshal(msg.Payload(), &esm); err != nil {
-				fa.logger.Error("error when reading ESM message", slog.Any("error", err))
-			} else if fa.OnEsmMessage != nil {
-				fa.OnEsmMessage(&esm)
-			}
-
-		case "extapi/control/response":
-			var crm ControlResponseMessage
-			if err := json.Unmarshal(msg.Payload(), &crm); err != nil {
-				fa.logger.Error("error when reading control response", slog.Any("error", err))
-			} else {
-				func() {
-					fa.pendingMutex.RLock()
-					defer fa.pendingMutex.RUnlock()
-					if e, exists := fa.pending[crm.TransId]; exists {
-						duration := time.Since(e.SentAt)
-						fa.logger.Debug("received response for known transaction", slog.String("transId", crm.TransId), slog.Duration("duration", duration))
-						e.DoneCh <- struct{}{}
-					} else if strings.HasPrefix(crm.TransId, "solarplant-") {
-						fa.logger.Warn("received response for unknown transaction", slog.String("transId", crm.TransId))
-					} else {
-						fa.logger.Info("received response for another client", slog.String("transId", crm.TransId), slog.Any("message", crm.Message))
-					}
-
-					if fa.OnControlResponse != nil {
-						fa.OnControlResponse(&crm)
-					}
-				}()
-			}
-
-		case "extapi/control/event":
-			var cem ControlEventMessage
-			if err := json.Unmarshal(msg.Payload(), &cem); err != nil {
-				fa.logger.Error("error when reading event", slog.Any("error", err))
-			} else {
-				fa.logger.Info("received control event", "event", cem)
-				if fa.OnControlEvent != nil {
-					fa.OnControlEvent(&cem)
-				}
-			}
-
-		default:
-			fa.logger.Warn("unknown topic", "topic", msg.Topic())
-		}
+		fa.handleMessage(msg)
 	})
 
 	if token.Wait() && token.Error() != nil {
@@ -187,6 +105,82 @@ func (fa *Ferroamp) Connect() error {
 	fa.startPurgeRoutine()
 
 	return nil
+}
+
+func (fa *Ferroamp) decodeAndHandle[T any](msg mqtt.Message, handle func(*T)) {
+	var value T
+	if err := json.Unmarshal(msg.Payload(), &value); err != nil {
+		fa.logger.Error("error when reading MQTT message", slog.String("topic", msg.Topic()), slog.Any("error", err))
+		return
+	}
+	if handle != nil {
+		handle(&value)
+	}
+}
+
+func (fa *Ferroamp) handleMessage(msg mqtt.Message) {
+	fa.lastMessageTime.Reset()
+
+	switch msg.Topic() {
+	case "extapi/data/ehub":
+		fa.decodeAndHandle(msg, fa.OnEhubMessage)
+
+	case "extapi/data/sso":
+		fa.decodeAndHandle(msg, func(sso *SsoMessage) {
+			if fa.OnSsoMessage != nil {
+				fa.OnSsoMessage(sso)
+			}
+
+			faultCode := uint16(sso.FaultCode.Value)
+			if faultCode > 0 && faultCode != fa.lastSsoFaultCode {
+				fa.logger.Warn("fault code from SSO, please contact ferroamp support",
+					slog.Any("faultCode", faultCode),
+					slog.Any("lastFaultCode", fa.lastSsoFaultCode))
+			}
+			fa.lastSsoFaultCode = faultCode
+		})
+
+	case "extapi/data/eso":
+		fa.decodeAndHandle(msg, func(eso *EsoMessage) {
+			if fa.OnEsoMessage != nil {
+				fa.OnEsoMessage(eso)
+			}
+			fa.handleEsoFaultCode(uint16(eso.FaultCode.Value))
+		})
+
+	case "extapi/data/esm":
+		fa.decodeAndHandle(msg, fa.OnEsmMessage)
+
+	case "extapi/control/response":
+		fa.decodeAndHandle(msg, func(crm *ControlResponseMessage) {
+			fa.pendingMutex.RLock()
+			defer fa.pendingMutex.RUnlock()
+			if e, exists := fa.pending[crm.TransId]; exists {
+				duration := time.Since(e.SentAt)
+				fa.logger.Debug("received response for known transaction", slog.String("transId", crm.TransId), slog.Duration("duration", duration))
+				e.DoneCh <- struct{}{}
+			} else if strings.HasPrefix(crm.TransId, "solarplant-") {
+				fa.logger.Warn("received response for unknown transaction", slog.String("transId", crm.TransId))
+			} else {
+				fa.logger.Info("received response for another client", slog.String("transId", crm.TransId), slog.Any("message", crm.Message))
+			}
+
+			if fa.OnControlResponse != nil {
+				fa.OnControlResponse(crm)
+			}
+		})
+
+	case "extapi/control/event":
+		fa.decodeAndHandle(msg, func(cem *ControlEventMessage) {
+			fa.logger.Info("received control event", "event", *cem)
+			if fa.OnControlEvent != nil {
+				fa.OnControlEvent(cem)
+			}
+		})
+
+	default:
+		fa.logger.Warn("unknown topic", "topic", msg.Topic())
+	}
 }
 
 func (fa *Ferroamp) Disconnect() {

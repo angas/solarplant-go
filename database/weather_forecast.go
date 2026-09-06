@@ -72,40 +72,30 @@ func (d *Database) GetWeatherForecast(ctx context.Context, startAt timex.BucketT
 }
 
 func (d *Database) GetWeatherForecastFrom(ctx context.Context, startAt timex.BucketTime) ([]WeatherForecastRow, error) {
-	rows, err := d.read.QueryContext(ctx, `
+	forecasts, err := d.queryRows(ctx, `
 		SELECT start_at, cloud_cover, temperature, precipitation
 		FROM weather_forecast
 		WHERE start_at >= ?`,
-		startAt.String())
+		func(rows *sql.Rows) (WeatherForecastRow, error) {
+			var row WeatherForecastRow
+			var startAtStr string
+			err := rows.Scan(
+				&startAtStr,
+				&row.CloudCover,
+				&row.Temperature,
+				&row.Precipitation)
+			if err != nil {
+				return WeatherForecastRow{}, fmt.Errorf("scanning weather forecast row: %w", err)
+			}
+
+			row.StartAt, err = timex.ParseBucketTime(startAtStr, timex.BucketSizeHour)
+			if err != nil {
+				return WeatherForecastRow{}, fmt.Errorf("parsing weather forecast start time: %w", err)
+			}
+			return row, nil
+		}, startAt.String())
 	if err != nil {
 		return nil, fmt.Errorf("fetching weather forecast from %s: %w", startAt.String(), err)
-	}
-
-	defer rows.Close()
-
-	var forecasts []WeatherForecastRow
-	for rows.Next() {
-		var row WeatherForecastRow
-		var startAtStr string
-		err := rows.Scan(
-			&startAtStr,
-			&row.CloudCover,
-			&row.Temperature,
-			&row.Precipitation)
-		if err != nil {
-			return nil, fmt.Errorf("scanning weather forecast row: %w", err)
-		}
-
-		row.StartAt, err = timex.ParseBucketTime(startAtStr, timex.BucketSizeHour)
-		if err != nil {
-			return nil, fmt.Errorf("parsing weather forecast start time: %w", err)
-		}
-
-		forecasts = append(forecasts, row)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating over weather forecast rows: %w", err)
 	}
 
 	return forecasts, nil

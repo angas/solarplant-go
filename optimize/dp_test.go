@@ -4,21 +4,17 @@ import (
 	"math"
 	"testing"
 	"time"
-
-	"github.com/angas/solarplant-go/config"
 )
 
 func testBattery() Battery {
 	return Battery{
-		CurrentLevel: 10.0,
-		AppConfigBatterySpec: config.AppConfigBatterySpec{
-			Capacity:         10.0,
-			MinLevel:         10.0,
-			MaxLevel:         100.0,
-			MaxChargeRate:    3.0,
-			MaxDischargeRate: 3.0,
-			DegradationCost:  0.1,
-		},
+		CurrentLevel:     10.0,
+		Capacity:         10.0,
+		MinLevel:         10.0,
+		MaxLevel:         100.0,
+		MaxChargeRate:    3.0,
+		MaxDischargeRate: 3.0,
+		DegradationCost:  0.1,
 	}
 }
 
@@ -121,7 +117,7 @@ func TestDPvsBruteForce(t *testing.T) {
 // TestDP15MinSlotDuration verifies DP works correctly at 15-min slot duration.
 func TestDP15MinSlotDuration(t *testing.T) {
 	input := testInput([]Forecast{
-		{EnergyPrice: -2.0, EnergyBalance: 0.5},  // 0.5 kWh in 15 min
+		{EnergyPrice: -2.0, EnergyBalance: 0.5}, // 0.5 kWh in 15 min
 		{EnergyPrice: -1.0, EnergyBalance: 0.5},
 		{EnergyPrice: 1.0, EnergyBalance: -0.5},
 		{EnergyPrice: 2.0, EnergyBalance: -0.5},

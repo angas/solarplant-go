@@ -26,8 +26,8 @@ import (
 var Version = "?.?.?"
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Logging of panics
 	defer func() {
@@ -47,10 +47,7 @@ func main() {
 
 	// Initiate logging in two steps, first by setting up the console handler
 	// then bringing up the database in order to also log to the database.
-	consoleHandler := tint.NewHandler(os.Stdout, &tint.Options{
-		Level:      cnfg.Logging.GetConsoleLevel(),
-		TimeFormat: time.RFC3339,
-	})
+	consoleHandler := tint.NewTextHandler(os.Stdout, &tint.Options{Level: cnfg.Logging.GetConsoleLevel(), TimeFormat: time.RFC3339})
 	slog.New(consoleHandler).DebugContext(ctx, "solarplant is starting...", slog.String("version", Version))
 
 	db, err := database.New(ctx, cnfg.Database.Path)
@@ -59,7 +56,7 @@ func main() {
 	}
 	defer db.Close()
 
-	logger := slog.New(logging.NewMultiHandler(
+	logger := slog.New(slog.NewMultiHandler(
 		consoleHandler,
 		logging.NewSQLiteHandler(db, cnfg.Logging.GetDbLevel(), cnfg.Logging.GetDbAttrsFormat())))
 	slog.SetDefault(logger)
@@ -139,19 +136,16 @@ func main() {
 		batteryRegulator.Run(ctx)
 	}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				logger.Info("main context done")
 				return
-			case sig := <-sigCh:
-				logger.Info("received signal", slog.Any("signal", sig))
-				cancel()
 			case batt := <-batteryRegulator.C:
+				if ctx.Err() != nil {
+					return
+				}
 				switch batt.Action {
 				case task.ActionAuto:
 					if err := fa.SetBatteryAuto(); err != nil {

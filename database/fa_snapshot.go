@@ -64,39 +64,30 @@ func (d *Database) GetFaSnapshot(ctx context.Context, hour timex.BucketTime) (Fa
 }
 
 func (d *Database) GetFaSnapshotFrom(ctx context.Context, from timex.BucketTime) ([]FaSnapshotRow, error) {
-	rows, err := d.read.QueryContext(ctx, "SELECT timestamp, data FROM fa_snapshot WHERE timestamp >= ?", from.String())
-	if err != nil {
-		return nil, fmt.Errorf("fetching ferroamp snapshots since %s: %w", from.String(), err)
-	}
-	defer rows.Close()
-
-	var result []FaSnapshotRow
-	for rows.Next() {
+	result, err := d.queryRows(ctx, "SELECT timestamp, data FROM fa_snapshot WHERE timestamp >= ?", func(rows *sql.Rows) (FaSnapshotRow, error) {
 		var jsonData string
 		var r FaSnapshotRow
 		var timestampStr string
 
 		err := rows.Scan(&timestampStr, &jsonData)
 		if err != nil {
-			return nil, fmt.Errorf("scanning fa_snapshot row (%s): %w", timestampStr, err)
+			return FaSnapshotRow{}, fmt.Errorf("scanning fa_snapshot row (%s): %w", timestampStr, err)
 		}
 
 		timestamp, err := timex.ParseBucketTime(timestampStr, timex.BucketSizeNone)
 		if err != nil {
-			return nil, fmt.Errorf("parsing ferroamp snapshot time (%s): %w", timestampStr, err)
+			return FaSnapshotRow{}, fmt.Errorf("parsing ferroamp snapshot time (%s): %w", timestampStr, err)
 		}
 		r.Timestamp = timestamp
 
 		err = json.Unmarshal([]byte(jsonData), &r.Data)
 		if err != nil {
-			return []FaSnapshotRow{}, fmt.Errorf("unmarshaling ferroamp snapshot from JSON: %w", err)
+			return FaSnapshotRow{}, fmt.Errorf("unmarshaling ferroamp snapshot from JSON: %w", err)
 		}
-
-		result = append(result, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating ferroamp snapshots: %w", err)
+		return r, nil
+	}, from.String())
+	if err != nil {
+		return nil, fmt.Errorf("fetching ferroamp snapshots since %s: %w", from.String(), err)
 	}
 
 	return result, nil

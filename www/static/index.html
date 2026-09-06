@@ -5,14 +5,14 @@
   <meta charset="UTF-8">
   <title>Solarplant</title>
   <!-- curl -s https://example.com/yada.min.js | openssl dgst -sha384 -binary | openssl base64 -A -->
-  <script defer src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"
-    integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+"
+  <script defer src="https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js"
+    integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc"
     crossorigin="anonymous"></script>
-  <script defer src="https://unpkg.com/htmx.org@2.0.2/dist/ext/ws.js"
-    integrity="sha384-SKL58mTYm5/WBYiKIGYnFVUKJQ5M3vPiSAp6DcV4r2juYLYJinjKrlD0M7EygyHQ"
+  <script defer src="https://unpkg.com/htmx.org@4.0.0/dist/ext/hx-ws.min.js"
+    integrity="sha384-8iDMDuKIquXLgObstxvwGlWD1bY/ALMH7k9rbC070qmZrRvJ0BGO+8xG+Ul+J0bP"
     crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"
-    integrity="sha384-T/4KgSWuZEPozpPz7rnnp/5lDSnpY1VPJCojf1S81uTHS1E38qgLfMgVsAeRCWc4"
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+    integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ"
     crossorigin="anonymous"></script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark" />
@@ -35,7 +35,7 @@
     }
     document.addEventListener('DOMContentLoaded', () => {
       let initialScroll = true;
-      document.getElementById('data').addEventListener('htmx:afterSettle', () => {
+      document.getElementById('data').addEventListener('htmx:after:settle', () => {
         if (initialScroll) {
           document.getElementById('current-slot')?.scrollIntoView({ block: 'center' });
           initialScroll = false;
@@ -63,13 +63,13 @@
         </svg>
       </button>
       <div id="menu-dropdown">
-        <button class="menu-item" hx-get="/timeseries" hx-target="#data" hx-on::after-request="toggleMenu()">
+        <button class="menu-item" hx-get="/timeseries" hx-target="#data" hx-on::finally:request="toggleMenu()">
           Time Series
         </button>
-        <button class="menu-item" hx-get="/dailystats" hx-target="#data" hx-on::after-request="toggleMenu()">
+        <button class="menu-item" hx-get="/dailystats" hx-target="#data" hx-on::finally:request="toggleMenu()">
           Daily Stats
         </button>
-        <button class="menu-item" hx-get="/log" hx-target="#data" hx-on::after-request="toggleMenu()">
+        <button class="menu-item" hx-get="/log" hx-target="#data" hx-on::finally:request="toggleMenu()">
           Log
         </button>
       </div>
@@ -78,7 +78,7 @@
   </header>
   <main>
     <div id="dashboard">
-      <div hx-ext="ws" ws-connect="/ws">
+      <div hx-ws:connect="/ws" hx-target="#real_time_data" hx-swap="outerHTML">
         <div id="real_time_data"></div>
       </div>
       <div class="chart_container">

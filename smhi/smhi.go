@@ -2,7 +2,7 @@ package smhi
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,14 +28,13 @@ func Get(ctx context.Context, lon float64, lat float64) ([]WeatherForecast, erro
 	}
 	defer res.Body.Close()
 
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading SMHI response body: %v", err)
-	}
+	return readForecast(res.Body)
+}
 
+func readForecast(body io.Reader) ([]WeatherForecast, error) {
 	var smhi smhi
-	if err := json.Unmarshal(body, &smhi); err != nil {
-		return nil, fmt.Errorf("error unmarshaling SMHI json: %v", err)
+	if err := json.UnmarshalRead(body, &smhi); err != nil {
+		return nil, fmt.Errorf("error decoding SMHI response: %w", err)
 	}
 
 	result := make([]WeatherForecast, 0, len(smhi.TimeSeries))

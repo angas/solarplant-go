@@ -106,11 +106,14 @@ func TestPendingRequestExpiry(t *testing.T) {
 	})
 }
 
-// Only Publish is expected in these tests; other MQTT operations fail if called.
+// Only IsConnectionOpen and Publish are expected in these tests; other MQTT operations fail if called.
 type publishClient struct {
 	mqtt.Client
-	publish func(string, byte, bool, any) mqtt.Token
+	disconnected bool
+	publish      func(string, byte, bool, any) mqtt.Token
 }
+
+func (c publishClient) IsConnectionOpen() bool { return !c.disconnected }
 
 func (c publishClient) Publish(topic string, qos byte, retained bool, payload any) mqtt.Token {
 	return c.publish(topic, qos, retained, payload)
@@ -133,7 +136,7 @@ func (t publishToken) Error() error { return t.err }
 
 func TestControlRequestTiming(t *testing.T) {
 	publishErr := errors.New("publish failed")
-	for _, mode := range []string{"ack", "no response", "publish timeout", "publish error"} {
+	for _, mode := range []string{"ack", "no response", "publish timeout", "publish error", "not connected"} {
 		t.Run(mode, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				var logs bytes.Buffer
@@ -145,7 +148,7 @@ func TestControlRequestTiming(t *testing.T) {
 				fa := &Ferroamp{
 					logger:  slog.New(slog.NewTextHandler(&logs, nil)),
 					pending: make(map[string]pendingRequest),
-					mtqqClient: publishClient{publish: func(topic string, qos byte, retained bool, payload any) mqtt.Token {
+					mtqqClient: publishClient{disconnected: mode == "not connected", publish: func(topic string, qos byte, retained bool, payload any) mqtt.Token {
 						publishes++
 						if topic != "extapi/control/request" || qos != 0 || retained || payload != "payload" {
 							t.Errorf("unexpected publish: %s %d %v %v", topic, qos, retained, payload)
@@ -180,10 +183,18 @@ func TestControlRequestTiming(t *testing.T) {
 				if elapsed := time.Since(start); elapsed != wantDuration {
 					t.Fatalf("elapsed=%v, want %v", elapsed, wantDuration)
 				}
-				if publishes != 1 {
-					t.Fatalf("publishes=%d, want 1", publishes)
+				wantPublishes := 1
+				if mode == "not connected" {
+					wantPublishes = 0
+				}
+				if publishes != wantPublishes {
+					t.Fatalf("publishes=%d, want %d", publishes, wantPublishes)
 				}
 				switch mode {
+				case "not connected":
+					if !errors.Is(err, errNotConnected) {
+						t.Fatalf("error=%v, want not connected", err)
+					}
 				case "publish error":
 					if !errors.Is(err, publishErr) {
 						t.Fatalf("error=%v, want publish error", err)
@@ -201,7 +212,7 @@ func TestControlRequestTiming(t *testing.T) {
 				if strings.Contains(logs.String(), "pending request timed out") != (mode == "no response") {
 					t.Fatalf("unexpected timeout logging: %s", logs.String())
 				}
-				if (mode == "publish error" || mode == "publish timeout") && len(fa.pending) != 0 {
+				if (mode == "publish error" || mode == "publish timeout" || mode == "not connected") && len(fa.pending) != 0 {
 					t.Fatal("failed publish created a pending request")
 				}
 			})

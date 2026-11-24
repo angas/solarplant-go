@@ -2,6 +2,7 @@ package ferroamp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -26,6 +27,8 @@ type pendingRequest struct {
 	SentAt  time.Time
 	DoneCh  chan struct{}
 }
+
+var errNotConnected = errors.New("cannot send battery control request to ferroamp: mqtt not connected")
 
 var topics = map[string]byte{
 	"extapi/data/ehub":        0,
@@ -69,11 +72,10 @@ func New(broker string, port int16, username string, password string) *Ferroamp 
 	opts.OnConnectionLost = func(client mqtt.Client, err error) {
 		logger.Warn("ferroamp mqtt connection lost", slog.Any("error", err))
 	}
-
-	mqttLogger := slog.Default().With("module", "mqtt")
-	mqtt.CRITICAL = newMqttLogger(mqttLogger, slog.LevelError)
-	mqtt.ERROR = newMqttLogger(mqttLogger, slog.LevelError)
-	mqtt.WARN = newMqttLogger(mqttLogger, slog.LevelWarn)
+	// Paho logs several debug records per incoming message, which would flood
+	// the log, so its logger is limited to info and above.
+	mqttHandler := newMinLevelHandler(slog.Default().Handler(), slog.LevelInfo)
+	opts.SetLogger(slog.New(mqttHandler).With("module", "mqtt"))
 
 	return &Ferroamp{
 		mtqqClient:       mqtt.NewClient(opts),
@@ -220,6 +222,12 @@ func (fa *Ferroamp) formatPayload(power float64) (transId string, payload string
 }
 
 func (fa *Ferroamp) sendControlRequest(transId string, payload string) error {
+	// Paho silently drops QoS 0 publishes while reconnecting and reports success,
+	// so the connection state must be checked before publishing.
+	if !fa.mtqqClient.IsConnectionOpen() {
+		return errNotConnected
+	}
+
 	token := fa.mtqqClient.Publish("extapi/control/request", 0, false, payload)
 	ok := token.WaitTimeout(time.Second * 5)
 	if !ok {

@@ -1,11 +1,13 @@
 package ferroamp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,14 +23,40 @@ type OnControlResponse func(msg *ControlResponseMessage)
 type OnControlEvent func(msg *ControlEventMessage)
 type OnInactivity func()
 
+// OnConnected is called on the initial connect and on every automatic
+// reconnect. Battery instructions sent before a reconnect may have been lost.
+type OnConnected func()
+
 type pendingRequest struct {
-	TransId string
-	Payload string
-	SentAt  time.Time
-	DoneCh  chan struct{}
+	TransId    string
+	Payload    string
+	SentAt     time.Time
+	ResponseCh chan *ControlResponseMessage // Buffered, receives the response at most once
 }
 
-var errNotConnected = errors.New("cannot send battery control request to ferroamp: mqtt not connected")
+const (
+	publishTimeout         = 5 * time.Second
+	controlResponseTimeout = 30 * time.Second
+	subscribeTimeout       = 10 * time.Second
+	// Time for the connect handler to report the first subscription; longer
+	// than subscribeTimeout so that a slow subscription reports its own error.
+	firstSubscribeTimeout = 2 * subscribeTimeout
+
+	// SUBACK return code for a subscription that the broker refused
+	subscriptionRejected = 0x80
+
+	// Status of a control response that accepted the request
+	statusAck = "ack"
+)
+
+var (
+	errNotConnected         = errors.New("cannot send battery control request to ferroamp: mqtt not connected")
+	errPublishTimeout       = errors.New("timeout when sending battery control request to ferroamp")
+	errNoResponse           = errors.New("no response from ferroamp on battery control request")
+	errRejected             = errors.New("ferroamp rejected battery control request")
+	errSubscribeTimeout     = errors.New("timeout when subscribing to ferroamp topics")
+	errSubscriptionRejected = errors.New("ferroamp mqtt broker rejected subscription")
+)
 
 var topics = map[string]byte{
 	"extapi/data/ehub":        0,
@@ -43,11 +71,11 @@ type Ferroamp struct {
 	mtqqClient        mqtt.Client
 	logger            *slog.Logger
 	pending           map[string]pendingRequest
-	pendingMutex      sync.RWMutex
+	pendingMutex      sync.Mutex
+	subscribed        chan error // Receives the result of the first subscription
 	lastEsoFaultCode  uint16
 	lastSsoFaultCode  uint16
 	lastMessageTime   ConcurrentTimer
-	stopPurgeCh       chan struct{}
 	stopMonitorCh     chan struct{}
 	OnEhubMessage     OnEhubMessage
 	OnSsoMessage      OnSsoMessage
@@ -56,35 +84,34 @@ type Ferroamp struct {
 	OnControlResponse OnControlResponse
 	OnControlEvent    OnControlEvent
 	OnInactivity      OnInactivity
+	OnConnected       OnConnected
 }
 
 func New(broker string, port int16, username string, password string) *Ferroamp {
-	logger := slog.Default().With("module", "ferroamp")
+	fa := &Ferroamp{
+		logger:     slog.Default().With("module", "ferroamp"),
+		pending:    make(map[string]pendingRequest),
+		subscribed: make(chan error, 1),
+	}
+
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(fmt.Sprintf("tcp://%s:%d", broker, port))
 	opts.SetClientID("solarplant")
 	opts.SetUsername(username)
 	opts.SetPassword(password)
 	opts.SetAutoReconnect(true)
-	opts.OnConnect = func(client mqtt.Client) {
-		logger.Info("ferroamp mqtt connected")
-	}
+	opts.OnConnect = fa.onConnect
 	opts.OnConnectionLost = func(client mqtt.Client, err error) {
-		logger.Warn("ferroamp mqtt connection lost", slog.Any("error", err))
+		fa.logger.Warn("ferroamp mqtt connection lost", slog.Any("error", err))
 	}
 	// Paho logs several debug records per incoming message, which would flood
 	// the log, so its logger is limited to info and above.
 	mqttHandler := newMinLevelHandler(slog.Default().Handler(), slog.LevelInfo)
 	opts.SetLogger(slog.New(mqttHandler).With("module", "mqtt"))
 
-	return &Ferroamp{
-		mtqqClient:       mqtt.NewClient(opts),
-		logger:           logger,
-		pending:          make(map[string]pendingRequest),
-		lastEsoFaultCode: 0,
-		lastSsoFaultCode: 0,
-		lastMessageTime:  ConcurrentTimer{},
-	}
+	fa.mtqqClient = mqtt.NewClient(opts)
+
+	return fa
 }
 
 func (fa *Ferroamp) Connect() error {
@@ -94,19 +121,76 @@ func (fa *Ferroamp) Connect() error {
 		return token.Error()
 	}
 
-	fa.inactivityWatchdog()
-
-	token := fa.mtqqClient.SubscribeMultiple(topics, func(client mqtt.Client, msg mqtt.Message) {
-		fa.handleMessage(msg)
-	})
-
-	if token.Wait() && token.Error() != nil {
-		return token.Error()
+	// The subscription is made in onConnect, which the client runs once connected.
+	timeout := time.NewTimer(firstSubscribeTimeout)
+	defer timeout.Stop()
+	select {
+	case err := <-fa.subscribed:
+		if err != nil {
+			return err
+		}
+	case <-timeout.C:
+		return fmt.Errorf("%w: connect handler did not report a subscription within %s", errSubscribeTimeout, firstSubscribeTimeout)
 	}
 
-	fa.startPurgeRoutine()
+	fa.inactivityWatchdog()
 
 	return nil
+}
+
+// onConnect runs on the initial connect and on every automatic reconnect. The
+// broker forgets the subscriptions when the connection is lost (clean session),
+// so they must be made again each time.
+func (fa *Ferroamp) onConnect(client mqtt.Client) {
+	fa.logger.Info("ferroamp mqtt connected")
+
+	err := fa.subscribe(client)
+	if err != nil {
+		// Without subscriptions no data arrives, so the inactivity watchdog will take over.
+		fa.logger.Error("failed to subscribe to ferroamp topics", slog.Any("error", err))
+	}
+
+	// Only Connect waits for the first result, later results are logged above.
+	select {
+	case fa.subscribed <- err:
+	default:
+	}
+
+	if fa.OnConnected != nil {
+		fa.OnConnected()
+	}
+}
+
+func (fa *Ferroamp) subscribe(client mqtt.Client) error {
+	token := client.SubscribeMultiple(topics, func(_ mqtt.Client, msg mqtt.Message) {
+		fa.handleMessage(msg)
+	})
+	if !token.WaitTimeout(subscribeTimeout) {
+		return errSubscribeTimeout
+	}
+	if err := token.Error(); err != nil {
+		return fmt.Errorf("error when subscribing to ferroamp topics: %w", err)
+	}
+	// A refused topic is not a token error, it is only visible in the result.
+	if st, ok := token.(*mqtt.SubscribeToken); ok {
+		if rejected := rejectedTopics(st.Result()); len(rejected) > 0 {
+			return fmt.Errorf("%w: %s", errSubscriptionRejected, strings.Join(rejected, ", "))
+		}
+	}
+	fa.logger.Debug("subscribed to ferroamp topics")
+	return nil
+}
+
+// rejectedTopics returns the topics that the broker refused, in sorted order.
+func rejectedTopics(result map[string]byte) []string {
+	var rejected []string
+	for topic, code := range result {
+		if code == subscriptionRejected {
+			rejected = append(rejected, topic)
+		}
+	}
+	slices.Sort(rejected)
+	return rejected
 }
 
 func (fa *Ferroamp) decodeAndHandle[T any](msg mqtt.Message, handle func(*T)) {
@@ -155,13 +239,12 @@ func (fa *Ferroamp) handleMessage(msg mqtt.Message) {
 
 	case "extapi/control/response":
 		fa.decodeAndHandle(msg, func(crm *ControlResponseMessage) {
-			fa.pendingMutex.RLock()
-			defer fa.pendingMutex.RUnlock()
-			if e, exists := fa.pending[crm.TransId]; exists {
+			if e, exists := fa.takePending(crm.TransId); exists {
 				duration := time.Since(e.SentAt)
 				fa.logger.Debug("received response for known transaction", slog.String("transId", crm.TransId), slog.Duration("duration", duration))
-				e.DoneCh <- struct{}{}
+				e.ResponseCh <- crm
 			} else if strings.HasPrefix(crm.TransId, "solarplant-") {
+				// The request has already been answered or has timed out
 				fa.logger.Warn("received response for unknown transaction", slog.String("transId", crm.TransId))
 			} else {
 				fa.logger.Info("received response for another client", slog.String("transId", crm.TransId), slog.Any("message", crm.Message))
@@ -187,10 +270,6 @@ func (fa *Ferroamp) handleMessage(msg mqtt.Message) {
 
 func (fa *Ferroamp) Disconnect() {
 	fa.logger.Info("disconnecting ferroamp mqtt client")
-	if fa.stopPurgeCh != nil {
-		close(fa.stopPurgeCh)
-		fa.stopPurgeCh = nil
-	}
 	if fa.stopMonitorCh != nil {
 		close(fa.stopMonitorCh) // Signal the monitor routine to stop
 		fa.stopMonitorCh = nil
@@ -221,54 +300,80 @@ func (fa *Ferroamp) formatPayload(power float64) (transId string, payload string
 	return transId, payload
 }
 
-func (fa *Ferroamp) sendControlRequest(transId string, payload string) error {
+func (fa *Ferroamp) sendControlRequest(ctx context.Context, transId string, payload string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("battery control request to ferroamp not sent: %w", err)
+	}
+
 	// Paho silently drops QoS 0 publishes while reconnecting and reports success,
 	// so the connection state must be checked before publishing.
 	if !fa.mtqqClient.IsConnectionOpen() {
 		return errNotConnected
 	}
 
+	// Registered before publishing, so that a fast response always finds its request.
+	response := make(chan *ControlResponseMessage, 1)
+	fa.pendingMutex.Lock()
+	fa.pending[transId] = pendingRequest{
+		TransId:    transId,
+		Payload:    payload,
+		SentAt:     time.Now(),
+		ResponseCh: response,
+	}
+	fa.pendingMutex.Unlock()
+	defer fa.takePending(transId)
+
 	token := fa.mtqqClient.Publish("extapi/control/request", 0, false, payload)
-	ok := token.WaitTimeout(time.Second * 5)
-	if !ok {
-		return fmt.Errorf("timeout when sending battery control request to ferroamp")
-	} else if token.Error() != nil {
-		return fmt.Errorf("error when sending battery control request to ferroamp: %w", token.Error())
-	} else {
-		func() {
-			fa.pendingMutex.Lock()
-			defer fa.pendingMutex.Unlock()
-			fa.pending[transId] = pendingRequest{
-				TransId: transId,
-				Payload: payload,
-				SentAt:  time.Now(),
-				DoneCh:  make(chan struct{}),
-			}
-			fa.logger.Debug("successfully sent battery control request to ferroamp, waiting for ack/nak...")
-		}()
+	if !token.WaitTimeout(publishTimeout) {
+		return errPublishTimeout
+	}
+	if err := token.Error(); err != nil {
+		return fmt.Errorf("error when sending battery control request to ferroamp: %w", err)
+	}
+	fa.logger.Debug("successfully sent battery control request to ferroamp, waiting for ack/nak...")
 
-		select {
-		case <-fa.pending[transId].DoneCh:
-		case <-time.After(30 * time.Second):
-			fa.logger.Warn("pending request timed out", slog.String("transId", transId))
+	timeout := time.NewTimer(controlResponseTimeout)
+	defer timeout.Stop()
+	select {
+	case crm := <-response:
+		if crm.Status != statusAck {
+			return fmt.Errorf("%w with status %q: %s (transId %s)", errRejected, crm.Status, crm.Message, transId)
 		}
-
 		return nil
+	case <-timeout.C:
+		return fmt.Errorf("%w within %s (transId %s)", errNoResponse, controlResponseTimeout, transId)
+	case <-ctx.Done():
+		return fmt.Errorf("stopped waiting for response from ferroamp (transId %s): %w", transId, ctx.Err())
 	}
 }
 
-func (fa *Ferroamp) SetBatteryAuto() error {
+// takePending removes and returns the pending request for a transaction. A
+// request can only be taken once, which guarantees that its ResponseCh
+// receives at most one response and that sending on it never blocks.
+func (fa *Ferroamp) takePending(transId string) (pendingRequest, bool) {
+	fa.pendingMutex.Lock()
+	defer fa.pendingMutex.Unlock()
+	e, exists := fa.pending[transId]
+	delete(fa.pending, transId)
+	return e, exists
+}
+
+// SetBatteryAuto hands the battery control back to Ferroamp. It blocks until
+// Ferroamp has responded, the request times out or ctx is done.
+func (fa *Ferroamp) SetBatteryAuto(ctx context.Context) error {
 	transId := fmt.Sprintf("solarplant-%d", time.Now().Unix())
 	payload := fmt.Sprintf(`{"transId":"%s","cmd":{"name":"auto"}}`, transId)
 	fa.logger.Info("setting ferroamp battery in auto mode", "payload", payload)
-	return fa.sendControlRequest(transId, payload)
+	return fa.sendControlRequest(ctx, transId, payload)
 }
 
-// Positive values (kW) equals discharge, negative charge
-func (fa *Ferroamp) SetBatteryLoad(power float64) error {
+// SetBatteryLoad sets the battery power in kW, where positive values equals
+// discharge and negative charge. It blocks until Ferroamp has responded, the
+// request times out or ctx is done.
+func (fa *Ferroamp) SetBatteryLoad(ctx context.Context, power float64) error {
 	transId, payload := fa.formatPayload(power)
 	fa.logger.Info("sending new battery load to ferroamp", "power", power, "payload", payload)
-	return fa.sendControlRequest(transId, payload)
+	return fa.sendControlRequest(ctx, transId, payload)
 }
 
 func (fa *Ferroamp) handleEsoFaultCode(newFaultCode uint16) {
@@ -290,36 +395,6 @@ func (fa *Ferroamp) handleEsoFaultCode(newFaultCode uint16) {
 	}
 
 	fa.lastEsoFaultCode = newFaultCode
-}
-
-func (fa *Ferroamp) startPurgeRoutine() {
-	fa.stopPurgeCh = make(chan struct{})
-
-	go func() {
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				func() {
-					fa.pendingMutex.Lock()
-					defer fa.pendingMutex.Unlock()
-					for transId, e := range fa.pending {
-						duration := time.Since(e.SentAt)
-						if duration > time.Minute {
-							fa.logger.Debug("purging previous request", slog.String("transId", transId), slog.Duration("duration", duration))
-							close(e.DoneCh)
-							delete(fa.pending, transId)
-						}
-					}
-				}()
-
-			case <-fa.stopPurgeCh:
-				fa.logger.Debug("stopping purge routine")
-				return
-			}
-		}
-	}()
 }
 
 func (fa *Ferroamp) inactivityWatchdog() {

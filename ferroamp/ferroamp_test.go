@@ -41,11 +41,11 @@ func TestHandleMessage(t *testing.T) {
 			for _, mode := range []string{"valid", "syntax error", "type error", "no callback"} {
 				t.Run(mode, func(t *testing.T) {
 					var logs bytes.Buffer
-					done := make(chan struct{}, 1)
+					done := make(chan *ControlResponseMessage, 1)
 					fa := &Ferroamp{
 						logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 						pending: map[string]pendingRequest{
-							"solarplant-test": {SentAt: time.Now(), DoneCh: done},
+							"solarplant-test": {SentAt: time.Now(), ResponseCh: done},
 						},
 						lastSsoFaultCode: 1,
 						lastEsoFaultCode: 1,
@@ -88,12 +88,18 @@ func TestHandleMessage(t *testing.T) {
 					if fa.lastSsoFaultCode != wantSso || fa.lastEsoFaultCode != wantEso {
 						t.Errorf("fault state: SSO=%d, ESO=%d; want SSO=%d, ESO=%d", fa.lastSsoFaultCode, fa.lastEsoFaultCode, wantSso, wantEso)
 					}
-					wantAcks := 0
-					if tt.topic == "extapi/control/response" && !invalid {
-						wantAcks = 1
+					wantAck := tt.topic == "extapi/control/response" && !invalid
+					acked := false
+					select {
+					case <-done:
+						acked = true
+					default:
 					}
-					if len(done) != wantAcks {
-						t.Errorf("transaction acknowledgements=%d, want %d", len(done), wantAcks)
+					if acked != wantAck {
+						t.Errorf("transaction acknowledged=%v, want %v", acked, wantAck)
+					}
+					if _, exists := fa.pending["solarplant-test"]; exists == wantAck {
+						t.Errorf("pending request retained=%v, want %v", exists, !wantAck)
 					}
 					if invalid {
 						if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "topic="+tt.topic) {

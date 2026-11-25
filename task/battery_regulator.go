@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"math"
+	"sync/atomic"
 	"time"
 
 	"github.com/angas/solarplant-go/optimize"
@@ -33,8 +34,9 @@ type BatteryRegulator struct {
 	faData                *ferroamp.FaInMemData
 	strategy              BatteryRegulatorStrategy
 	usingFallbackStrategy bool
-	lastInstruction       BatteryInstruction
-	C                     chan BatteryInstruction
+	lastInstruction       BatteryInstruction // Last instruction that was applied successfully
+	resend                atomic.Bool        // Set when the last instruction may have been lost
+	apply                 ApplyBatteryInstruction
 }
 
 const (
@@ -50,12 +52,18 @@ type BatteryInstruction struct {
 	Power  float64       // power in kW
 }
 
+// ApplyBatteryInstruction sends an instruction to the battery and must return
+// when ctx is done. An instruction that returns an error is sent again on the
+// regulator's next update.
+type ApplyBatteryInstruction func(ctx context.Context, bi BatteryInstruction) error
+
 func NewBatteryRegulator(
 	logger *slog.Logger,
 	db *database.Database,
 	bs config.AppConfigBatterySpec,
 	faData *ferroamp.FaInMemData,
-	strategy BatteryRegulatorStrategy) *BatteryRegulator {
+	strategy BatteryRegulatorStrategy,
+	apply ApplyBatteryInstruction) *BatteryRegulator {
 
 	return &BatteryRegulator{
 		logger:                logger,
@@ -65,8 +73,15 @@ func NewBatteryRegulator(
 		strategy:              strategy,
 		usingFallbackStrategy: false, // Keeping state to avoid spamming logs
 		lastInstruction:       BatteryInstruction{},
-		C:                     make(chan BatteryInstruction),
+		apply:                 apply,
 	}
+}
+
+// Resend makes the regulator send its instruction again on the next update,
+// even if it is unchanged. It is used when the battery may have lost the last
+// instruction, and is safe to call from any goroutine.
+func (br *BatteryRegulator) Resend() {
+	br.resend.Store(true)
 }
 
 func (br *BatteryRegulator) Run(ctx context.Context) {
@@ -101,6 +116,12 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
+	if br.resend.Swap(false) && br.lastInstruction != (BatteryInstruction{}) {
+		br.logger.Info("battery may have lost its last instruction, sending it again",
+			slog.Any("lastInstruction", br.lastInstruction))
+		br.lastInstruction = BatteryInstruction{}
+	}
+
 	gridPwr := br.faData.GridPower()
 	battLvl := br.faData.BatteryLevel()
 	battPwr := br.faData.BatteryPower()
@@ -134,10 +155,6 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 
 	sendAction := func(action BatteryAction, power float64) {
 		bi := BatteryInstruction{Action: action, Power: power}
-		diff := math.Abs(bi.Power - br.lastInstruction.Power)
-		if bi.Action == br.lastInstruction.Action && diff < br.strategy.UpdateThreshold {
-			return
-		}
 		// Fully charged, stop charging
 		if bi.Action == ActionCharge && battLvl >= br.spec.MaxLevel {
 			bi.Power = 0
@@ -145,6 +162,11 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 		// Fully discharged, stop discharging
 		if bi.Action == ActionDischarge && battLvl <= br.spec.MinLevel {
 			bi.Power = 0
+		}
+		// Compared after the limits above, so that an unchanged instruction is not sent again
+		diff := math.Abs(bi.Power - br.lastInstruction.Power)
+		if bi.Action == br.lastInstruction.Action && diff < br.strategy.UpdateThreshold {
+			return
 		}
 
 		br.logger.Debug("new battery regulation instruction",
@@ -155,12 +177,17 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 			slog.String("strategy", planning.Strategy),
 			slog.Any("instruction", bi))
 
-		select {
-		case <-ctx.Done():
+		if err := br.apply(ctx, bi); err != nil {
+			if ctx.Err() != nil {
+				return // Shutting down
+			}
+			// lastInstruction is left unchanged, so the instruction is sent again on the next update
+			br.logger.Error("failed to apply battery instruction, retrying on next update",
+				slog.Any("instruction", bi),
+				slog.Any("error", err))
 			return
-		case br.C <- bi:
-			br.lastInstruction = bi
 		}
+		br.lastInstruction = bi
 	}
 
 	switch planning.Strategy {
@@ -177,9 +204,8 @@ func (br *BatteryRegulator) adjustLoad(ctx context.Context) {
 		sendAction(ActionCharge, newBattPwr)
 
 	case optimize.StrategyDischarge.String():
-		freePwr := gridPwr - 1 // 1 kW safety zone
-		newBattPwr := math.Max(br.spec.MaxDischargeRate, freePwr)
-		sendAction(ActionDischarge, newBattPwr)
+		// The planning assumes discharge at the maximum rate, which must not be exceeded
+		sendAction(ActionDischarge, br.spec.MaxDischargeRate)
 
 	default:
 		br.logger.Error("unknown strategy", slog.Any("strategy", planning.Strategy))

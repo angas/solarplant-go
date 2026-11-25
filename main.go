@@ -99,6 +99,29 @@ func main() {
 		fa.Disconnect()
 		exitWithError(ctx, logger, fmt.Errorf("ferroamp mqtt traffic is dead, terminating..."))
 	}
+
+	// Battery watchdog that keeps the battery within healthy limits
+	regulatorStrategy := task.BatteryRegulatorStrategy{
+		Interval:        time.Second * 10,
+		UpdateThreshold: 0.1,
+		GridMaxPower:    cnfg.Planner.GridMaxPower,
+	}
+	applyBatteryInstruction := func(ctx context.Context, bi task.BatteryInstruction) error {
+		switch bi.Action {
+		case task.ActionAuto:
+			return fa.SetBatteryAuto(ctx)
+		case task.ActionCharge:
+			return fa.SetBatteryLoad(ctx, -bi.Power)
+		case task.ActionDischarge:
+			return fa.SetBatteryLoad(ctx, bi.Power)
+		default:
+			return fmt.Errorf("unknown battery action %q", bi.Action)
+		}
+	}
+	batteryRegulator := task.NewBatteryRegulator(logger, db, cnfg.BatterySpec, faInMem, regulatorStrategy, applyBatteryInstruction)
+	// Ferroamp may have lost the battery instruction while the connection was down
+	fa.OnConnected = batteryRegulator.Resend
+
 	if isDevMode() {
 		logger.Info("dev mode, skipping ferroamp connection")
 	} else {
@@ -123,46 +146,11 @@ func main() {
 		defer tasks.Stop()
 	}
 
-	// Battery watchdog that keeps the battery within healthy limits
-	regulatorStrategy := task.BatteryRegulatorStrategy{
-		Interval:        time.Second * 10,
-		UpdateThreshold: 0.1,
-		GridMaxPower:    cnfg.Planner.GridMaxPower,
-	}
-	batteryRegulator := task.NewBatteryRegulator(logger, db, cnfg.BatterySpec, faInMem, regulatorStrategy)
 	if isDevMode() {
 		logger.Info("dev mode, skipping battery regulator")
 	} else {
 		batteryRegulator.Run(ctx)
 	}
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				logger.Info("main context done")
-				return
-			case batt := <-batteryRegulator.C:
-				if ctx.Err() != nil {
-					return
-				}
-				switch batt.Action {
-				case task.ActionAuto:
-					if err := fa.SetBatteryAuto(); err != nil {
-						logger.ErrorContext(ctx, "failed to set battery to auto mode", slog.Any("error", err))
-					}
-				case task.ActionCharge:
-					if err := fa.SetBatteryLoad(-batt.Power); err != nil {
-						logger.ErrorContext(ctx, "failed to set battery to charge mode", slog.Any("error", err))
-					}
-				case task.ActionDischarge:
-					if err := fa.SetBatteryLoad(batt.Power); err != nil {
-						logger.ErrorContext(ctx, "failed to set battery to discharge mode", slog.Any("error", err))
-					}
-				}
-			}
-		}
-	}()
 
 	server := www.StartServer(db, tasks, faInMem, recentHours, cnfg, Version)
 	server.Run(ctx)

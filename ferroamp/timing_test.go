@@ -2,6 +2,7 @@ package ferroamp
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"strings"
@@ -60,52 +61,6 @@ func TestInactivityWatchdogTiming(t *testing.T) {
 	})
 }
 
-func TestPendingRequestExpiry(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var logs bytes.Buffer
-		expired := make(chan struct{})
-		fa := &Ferroamp{
-			logger:  slog.New(slog.NewTextHandler(&logs, nil)),
-			pending: map[string]pendingRequest{"old": {SentAt: time.Now(), DoneCh: expired}},
-		}
-		fa.startPurgeRoutine()
-		defer func() { close(fa.stopPurgeCh); synctest.Wait() }()
-		synctest.Wait()
-		time.Sleep(time.Minute)
-		synctest.Wait()
-		if len(fa.pending) != 1 {
-			t.Fatal("request expired at exactly one minute")
-		}
-		select {
-		case <-expired:
-			t.Fatal("waiter released too early")
-		default:
-		}
-		fresh := make(chan struct{})
-		fa.pendingMutex.Lock()
-		fa.pending["fresh"] = pendingRequest{SentAt: time.Now(), DoneCh: fresh}
-		fa.pendingMutex.Unlock()
-		time.Sleep(time.Minute)
-		synctest.Wait()
-		if _, exists := fa.pending["old"]; exists {
-			t.Fatal("expired request retained")
-		}
-		select {
-		case <-expired:
-		default:
-			t.Fatal("expired request waiter not released")
-		}
-		if _, exists := fa.pending["fresh"]; !exists {
-			t.Fatal("fresh request removed")
-		}
-		select {
-		case <-fresh:
-			t.Fatal("fresh request waiter released")
-		default:
-		}
-	})
-}
-
 // Only IsConnectionOpen and Publish are expected in these tests; other MQTT operations fail if called.
 type publishClient struct {
 	mqtt.Client
@@ -132,11 +87,12 @@ func (t publishToken) WaitTimeout(timeout time.Duration) bool {
 	}
 	return true
 }
+func (t publishToken) Wait() bool   { return true }
 func (t publishToken) Error() error { return t.err }
 
 func TestControlRequestTiming(t *testing.T) {
 	publishErr := errors.New("publish failed")
-	for _, mode := range []string{"ack", "no response", "publish timeout", "publish error", "not connected"} {
+	for _, mode := range []string{"ack", "nak", "no response", "publish timeout", "publish error", "not connected", "cancelled before send", "cancelled while waiting"} {
 		t.Run(mode, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				var logs bytes.Buffer
@@ -156,13 +112,18 @@ func TestControlRequestTiming(t *testing.T) {
 						return token
 					}},
 				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				if mode == "cancelled before send" {
+					cancel()
+				}
 				done := make(chan error, 1)
 				start := time.Now()
-				go func() { done <- fa.sendControlRequest("solarplant-test", "payload") }()
+				go func() { done <- fa.sendControlRequest(ctx, "solarplant-test", "payload") }()
 				synctest.Wait()
 				wantDuration := time.Duration(0)
 				switch mode {
-				case "ack", "no response":
+				case "ack", "nak", "no response", "cancelled while waiting":
 					time.Sleep(29 * time.Second)
 					synctest.Wait()
 					select {
@@ -170,10 +131,14 @@ func TestControlRequestTiming(t *testing.T) {
 						t.Fatalf("request completed early: %v", err)
 					default:
 					}
-					if mode == "ack" {
-						fa.handleMessage(testMessage{topic: "extapi/control/response", payload: `{"transId":"solarplant-test","status":"ack"}`})
+					switch mode {
+					case "ack", "nak":
+						fa.handleMessage(testMessage{topic: "extapi/control/response", payload: `{"transId":"solarplant-test","status":"` + mode + `","msg":"reason"}`})
 						wantDuration = 29 * time.Second
-					} else {
+					case "cancelled while waiting":
+						cancel()
+						wantDuration = 29 * time.Second
+					default:
 						wantDuration = 30 * time.Second
 					}
 				case "publish timeout":
@@ -184,7 +149,7 @@ func TestControlRequestTiming(t *testing.T) {
 					t.Fatalf("elapsed=%v, want %v", elapsed, wantDuration)
 				}
 				wantPublishes := 1
-				if mode == "not connected" {
+				if mode == "not connected" || mode == "cancelled before send" {
 					wantPublishes = 0
 				}
 				if publishes != wantPublishes {
@@ -200,20 +165,34 @@ func TestControlRequestTiming(t *testing.T) {
 						t.Fatalf("error=%v, want publish error", err)
 					}
 				case "publish timeout":
-					if err == nil || !strings.Contains(err.Error(), "timeout") {
-						t.Fatalf("error=%v, want timeout", err)
+					if !errors.Is(err, errPublishTimeout) {
+						t.Fatalf("error=%v, want publish timeout", err)
+					}
+				case "cancelled before send", "cancelled while waiting":
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("error=%v, want cancelled", err)
+					}
+				case "nak":
+					if !errors.Is(err, errRejected) || !strings.Contains(err.Error(), "reason") {
+						t.Fatalf("error=%v, want rejected with reason", err)
+					}
+				case "no response":
+					if !errors.Is(err, errNoResponse) {
+						t.Fatalf("error=%v, want no response", err)
 					}
 				default:
-					// Missing application acknowledgement currently logs a warning but returns nil.
 					if err != nil {
 						t.Fatal(err)
 					}
 				}
-				if strings.Contains(logs.String(), "pending request timed out") != (mode == "no response") {
-					t.Fatalf("unexpected timeout logging: %s", logs.String())
+				if len(fa.pending) != 0 {
+					t.Fatalf("pending requests retained: %v", fa.pending)
 				}
-				if (mode == "publish error" || mode == "publish timeout" || mode == "not connected") && len(fa.pending) != 0 {
-					t.Fatal("failed publish created a pending request")
+
+				// A late or duplicate response must neither block the message handler nor be mistaken for a new one.
+				fa.handleMessage(testMessage{topic: "extapi/control/response", payload: `{"transId":"solarplant-test","status":"ack"}`})
+				if !strings.Contains(logs.String(), "received response for unknown transaction") {
+					t.Fatalf("late response not logged: %s", logs.String())
 				}
 			})
 		})
